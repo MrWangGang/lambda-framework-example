@@ -1,89 +1,76 @@
-# Lambda Framework · 示例与验证
+# Lambda Framework Example
 
-这个仓库展示如何使用 [Lambda Framework](https://github.com/MrWangGang/lambda-framework)，并提供连接真实 Redis、MongoDB、RabbitMQ 的集成测试。基线为 **JDK 27**，与框架的 `1.0.0-SNAPSHOT` 本地构件配套使用。
+使用 **JDK 27 + Spring WebFlux** 的可运行后端示例，基于 [Lambda Framework](https://github.com/MrWangGang/lambda-framework)。一个应用连接 MongoDB 副本集、Redis、RabbitMQ、Nacos 和 Qdrant，展示从请求校验到数据持久化的完整流程。
 
-## 目录
+## 能做什么
 
-```text
-lambda-framework-example/
-├── ace-microservices-fxq/       # RPC 调用方与接口示例
-├── ace-microservices-service/   # 业务服务与接口示例
-├── integration-tests/          # 无需 Nacos 的基础设施验证
-├── scripts/mvn.sh              # 复用 IDEA 内置 Maven
-└── docs/                       # 配置与验证说明
-```
+| 场景 | 实现要点 |
+|---|---|
+| 商品管理 | Decimal128 金额、复合索引、游标分页、版本号防止覆盖更新 |
+| 用户收藏 | 多对多关系集合、唯一索引、幂等添加与删除 |
+| 下单扣库存 | MongoDB 多文档事务、库存条件更新、请求号幂等、瞬时事务冲突有限重试 |
+| 缓存 | Redis ACL 登录、键前缀、TTL、读取与删除 |
+| 延迟通知 | RabbitMQ 延迟插件、持久消息、发布确认、落库后 ACK、死信队列 |
+| 向量检索 | Qdrant API Key、向量写入和相似度查询；演示使用 3 维向量 |
+| 配置与发现 | Nacos 远程配置、动态刷新、实例注册与注销 |
 
-两个业务项目均拆分为 `facade` 和 `server`。Facade 只定义接口和模型，两个 facade 不相互依赖；跨服务调用依赖由 server 声明。根 POM 统一编排构建，避免手工调整模块顺序。
+## 快速启动
 
-## 三步验证
-
-### 1. 构建框架
-
-建议将两个仓库放在同一个目录：
-
-```text
-workspace/
-├── lambda-framework/
-└── lambda-framework-example/
-```
+1. 将两个仓库放在同级目录，使用 JDK 27。IDEA 的 Project SDK 与 Maven Runner JRE 都设置为 27。
+2. 构建框架到本地 Maven 缓存：
 
 ```bash
 cd ../lambda-framework
 ./scripts/mvn.sh clean install
-```
-
-只安装到本机 Maven 缓存，不上传构件。不需要额外安装 Maven；`scripts/mvn.sh` 会使用已有 IDEA 内置 Maven，也支持 `MAVEN_BIN` 指定路径。
-
-### 2. 构建示例并运行本地回归
-
-```bash
 cd ../lambda-framework-example
-./scripts/mvn.sh clean verify
+cp .env.example .env
 ```
 
-该命令编译全部示例模块并运行 JSON 回归测试，不连接外部数据库。原有两个 `RunTest` 没有测试方法，不能据其构建成功推断完整微服务启动成功。
+3. 编辑 `.env`，填写已有服务器地址、账号、密码和本机 JDK 路径。脚本使用 IDEA 自带 Maven，亦可通过 `MAVEN_BIN` 指定已有 Maven；不会安装 Maven。
+4. 在 Nacos 公共命名空间创建下面的配置。服务器须已安装 RabbitMQ 延迟插件，MongoDB 须已配置 `rs0` 副本集。
 
-### 3. 运行真实服务联调
+```properties
+# Data ID: lambda-example-app.properties
+# Group: LAMBDA_EXAMPLE
+# 配置类型: Properties
+example.greeting=Hello from Nacos
+```
 
-先在目标服务器准备 MongoDB、Redis 和 RabbitMQ。Redis 可使用 ACL 用户；RabbitMQ 必须启用 `rabbitmq_delayed_message_exchange`。
+5. 启动：
 
 ```bash
-export SERVICE_HOST="你的服务器IP"
-export SERVICE_USER="root"
-# 避免密码进入 shell 历史：在 bash / zsh 中交互读取
-read -rs SERVICE_PASSWORD
-export SERVICE_PASSWORD
-./scripts/mvn.sh -pl integration-tests -Pintegration verify
-unset SERVICE_PASSWORD
+./scripts/run.sh
+curl http://127.0.0.1:8081/api/info
 ```
 
-| 测试 | 验证内容 | 清理方式 |
-|---|---|---|
-| Redis | 框架配置、ACL 认证、写入及读取 | 删除随机测试键并确认不存在；键另带 60 秒 TTL |
-| MongoDB | 框架单机配置、CRUD、Boot 上下文启动与模板读写 | 删除本次随机测试数据库并确认不存在 |
-| RabbitMQ | 框架发送器、发布确认、延迟投递 | 删除本次随机队列与交换机 |
+将 Nacos 中的 `example.greeting` 改为其他值并发布，再请求 `/api/info` 可以看到更新。远程配置是启动必需项；连接错误会直接报错。
 
-测试资源统一使用 `lambda_it_` 加随机 UUID。清理放在 `finally` 中；连接失败时不执行全库清空，也不会删除业务资源。失败日志在 `integration-tests/target/failsafe-reports/`，本地回归结果在 `target/surefire-reports/`。
+应用默认监听 `127.0.0.1:8081`。需要局域网访问时设置 `APP_BIND_ADDRESS=0.0.0.0`，并将 `APP_REGISTER_IP` 设置为调用方可达地址。示例接口尚未接入业务用户认证，适合作为内部开发起点。
 
-## 运行完整微服务示例
+## 目录
 
-完整示例依赖 Nacos 中的业务配置，还可能需要 MySQL、Kafka、ZooKeeper 等服务。它与上述独立基础设施测试的运行前提不同。
+```text
+lambda-example-app/src/main/
+├── java/org/lambda/example/app/
+│   ├── Application.java
+│   ├── config/                 # 框架基础设施配置与事务
+│   ├── catalog/                # 商品、收藏、订单
+│   ├── cache/                  # Redis
+│   ├── messaging/              # 延迟通知与消费回执
+│   ├── vector/                 # Qdrant
+│   └── web/                    # HTTP 接口与入参校验
+└── resources/application.properties
+scripts/                        # 复用 Maven 与启动脚本
+docs/                           # 接口说明、配置与验收记录
+```
 
-- `NACOS_SERVER_ADDR`：Nacos 地址，默认 `127.0.0.1:8848`。
-- `NACOS_NAMESPACE`：命名空间 ID，默认公共命名空间。
-- `NACOS_GROUP`：配置分组，默认 `ace-microservices`。
-- `NACOS_USERNAME` / `NACOS_PASSWORD`：Nacos 认证信息。
+已将原有零散演示和临时测试工程整理为上述业务模块。仓库不保留测试源码、测试数据、构建产物或真实凭据。
 
-配置通过 `application.properties` 中的 `spring.config.import` 加载，不再使用旧 bootstrap 机制。应用名称对应配置 Data ID：`ace-microservices-fxq.properties` 与 `ace-microservices-service.properties`。业务数据源、RSocket 端口等参数需按实际环境配置。
+## 使用与维护
 
-## 遇到问题
+- [接口与调用示例](docs/API.md)：创建商品、游标分页、收藏、下单、延迟消息和向量检索。
+- [配置说明](docs/CONFIGURATION.md)：环境变量、服务端口与资源命名。
+- [验收记录](docs/TESTING.md)：真实服务验证范围、结果和清理。
+- 修改后运行 `./scripts/mvn.sh clean package`；这是编译打包，不代表自动执行外部验收。需要清除构建产物时执行 `./scripts/mvn.sh clean`。
 
-- **找不到框架依赖**：先在框架仓库执行 `install`，确认两个项目使用同一个本地 Maven 缓存。
-- **Redis 认证失败**：确认 ACL 用户名存在；只填写密码会尝试 default 用户。
-- **连接超时或握手中断**：检查云防火墙、主机端口、来源 IP 和容器日志。
-- **延迟交换机不支持**：检查插件启用状态及 RabbitMQ / 插件版本兼容性。
-- **MongoDB 事务失败**：单机不支持多文档事务；本测试验证的是单文档 CRUD。
-
-本仓库不包含服务器密码、云密钥或私有 Maven 仓库凭据。不要将本地 `.env` 与测试结果中的敏感配置提交到仓库。
-
-本次结果和复现范围见[测试记录](docs/TESTING.md)。
+MongoDB 是业务事实来源。当前示例中缓存、消息与向量接口各自独立，尚未实现 MongoDB 与外部系统的跨库原子提交。业务需要可靠同步时应补充事务 Outbox 与幂等消费，详见配置说明。

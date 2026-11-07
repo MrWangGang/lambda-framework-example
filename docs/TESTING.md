@@ -1,45 +1,63 @@
-# 测试与验证记录
+# 验收记录
 
-日期：2026-11-07。使用已有 JDK 27.0.1.0.3 与 IntelliJ IDEA 内置 Maven 3.9.16；未安装额外 Maven，也未向远程 Maven 仓库发布构件。
+日期：2026-11-07。使用已有 JDK 27.0.1.0.3 与 IntelliJ IDEA 内置 Maven 3.9.16；未安装额外 Maven，未发布远程 Maven 构件。
 
-## 结果
+## 最终结果
 
-| 验证项 | 结果 |
-|---|---|
-| 框架 `clean install` | 15 个 reactor 项目全部成功 |
-| 示例 `-Pintegration clean verify` | 8 个 reactor 项目全部成功 |
-| JSON 回归 | 2 项通过：中文 record/时间往返、未知字段兼容 |
-| Redis | ACL 认证、框架写入/读取、删除并确认不存在 |
-| MongoDB | 单机认证、插入/查询/更新/删除、临时数据库清理 |
-| MongoDB Spring Boot 配置 | 不配置 replica 属性，启动上下文并通过 ReactiveMongoTemplate 读写、清理 |
-| RabbitMQ | 框架 Sender 发布确认、立即不可取、延迟 2 秒后收取、删除队列与交换机 |
+- 框架 `clean install`：15 个 reactor 项目全部成功。
+- 示例 `clean package`：2 个 reactor 项目全部成功。
+- 仓库外 JUnit 验收：**11 项通过，0 失败，0 错误，0 跳过**。
+- 正式应用 HTTP 端到端验收：**22 项通过**，使用真实 MongoDB、Redis、RabbitMQ、Nacos 和 Qdrant。
+- 交付的 `scripts/run.sh` 和本地 `.env` 实际启动通过，`/api/info` 读取远程 greeting 与 `rs0`。
 
-最终 JUnit 结果：**6 项通过、0 失败、0 错误、0 跳过**（Surefire 2 + Failsafe 4）。外部服务版本为 MongoDB 9.0.4、Redis 8.10.3、RabbitMQ 4.2.9，延迟插件 4.2.0。
+## 独立测试
 
-## 复现
+| 分类 | 项数 | 核验内容 |
+|---|---:|---|
+| JSON | 2 | 中文 record、时间字段往返、未知字段兼容 |
+| 基础设施 | 4 | Redis ACL 与读写清理；Mongo CRUD；Boot Mongo 配置；Rabbit 延迟发布与确认 |
+| MongoDB 副本集 | 2 | rs0 主节点发现；Java Driver 与 Spring Reactive 事务提交、回滚及跨集合一致性 |
+| Nacos | 3 | 配置发布、读取、变更监听、删除；实例注册、发现、注销；Boot 远程配置导入和实际 HTTP 端口注册 |
 
-先在框架仓库运行 `./scripts/mvn.sh clean install`，再在示例根目录执行：
+Nacos 删除配置后，客户端可能短暂返回缓存内容；清理断言使用带认证的服务端查询，确认 HTTP 404、业务码 20004，避免把本地快照误认为服务端残留。
 
-```bash
-export JAVA_HOME="你的 JDK 27 路径"
-export SERVICE_HOST="服务主机"
-export SERVICE_USER="服务账号"
-read -rs SERVICE_PASSWORD
-export SERVICE_PASSWORD
-./scripts/mvn.sh -Pintegration clean verify
-unset SERVICE_PASSWORD
-```
+## 正式业务接口的 22 项检查
 
-不需要外部服务时，执行 `./scripts/mvn.sh clean verify`：编译全部模块并仅运行 2 项 JSON 测试。脚本复用 IDEA 内置 Maven，也可通过 `MAVEN_BIN` 指定已有 Maven。
+1. 远程 Nacos 配置加载与 MongoDB rs0 连接。
+2. Nacos 注册实际应用端口。
+3. 运行中动态刷新 greeting。
+4. 创建及查询商品，保留金额精度。
+5. 非法商品入参返回 400。
+6. 分类复合游标分页，无重复商品。
+7. 带版本更新成功，旧版本返回 409。
+8. 收藏唯一约束、幂等添加及删除。
+9. 订单与扣库存同事务提交。
+10. 请求号幂等，不重复扣库存；参数变化返回 409。
+11. 库存不足返回 409，不改变库存。
+12. 失败事务不留下订单，同一请求号可在条件满足后成功。
+13. 两个并发事务保持库存一致。
+14. 并发相同请求号只创建一单、只扣一次库存。
+15. 并发购买有限库存时不超卖。
+16. Redis 写入、读取、删除。
+17. Redis TTL 到期。
+18. 延迟消息发布确认、到期消费、Mongo 回执及 ACK；设置 2 秒，本次观察约 2.50 秒。
+19. 重复投递保留原始幂等回执。
+20. 无效消息进入死信队列并清理。
+21. Qdrant 向量写入及最近邻查询。
+22. 非法 UUID、向量维度、全零向量返回 400。
 
-Surefire 报告位于 `integration-tests/target/surefire-reports/`；Failsafe 报告位于 `integration-tests/target/failsafe-reports/`。macOS 测试自动选择对应架构的 Netty DNS 原生库；版本与 Boot BOM 的 Netty 版本一致。
+延迟观察值包含网络与轮询时间；两个并发请求的检查用于验证一致性，不是吞吐或压力测试。
 
-## 数据清理
+## 清理与代码目录
 
-每次执行使用随机 `lambda_it_` 名称。Redis 测试键额外设置 60 秒 TTL；Mongo 测试数据库、Rabbit 测试队列和交换机均由 `finally` 清理。本次还通过服务端独立检查，确认测试资源剩余数量为 0。若进程被强制终止，应根据日志和本次 UUID 定位残留，不要使用全库清空命令。
+临时资源使用随机 `lambda_it_` 名称；验收结束后删除对应 Mongo 数据库、Redis 键、Rabbit 队列/交换机、Qdrant 集合、Nacos 活动配置及服务实例/空服务定义，并从服务端独立核验。正式示例仅保留启动配置和空数据结构。审计日志与配置变更历史按产品自身策略保留。
 
-## 范围
+临时测试工程在仓库外执行，验收后删除；仓库仅保留 `src/main` 业务代码、配置模板、运行脚本和文档。执行 `mvn package` 只构建应用，不会重跑已移除的验收程序。验证记录与日志另行交付。
 
-本结果覆盖构建、JSON 与上述真实基础设施路径。未验证完整 Nacos 微服务启动、跨服务 RPC、MySQL、Kafka、Elasticsearch、ZooKeeper、Redis 集群/哨兵、Mongo 副本集事务、性能压测或故障恢复。原有两个 `RunTest` 没有测试方法，不能算作启动测试。
+## 运行边界
 
-RabbitMQ 选择 4.2.9 是延迟插件兼容性要求；没有宣称使用 RabbitMQ 最新主版本。框架保留 Jackson 2 公共 API 兼容线，Spring 生态传递版本由 Boot / Cloud BOM 管理。
+服务版本：MongoDB 9.0.4、Redis 8.10.3、RabbitMQ 4.2.9 + 延迟插件 4.2.0、Qdrant 1.20.0、Nacos 3.3.0。RabbitMQ 版本受原版延迟插件兼容性限制。
+
+单节点 MongoDB 副本集与 Nacos standalone 没有高可用。本次未进行生产规模压力、故障切换、备份恢复演练，未部署 MySQL、Kafka、Elasticsearch、ZooKeeper，未实机验证跨服务 RPC。腾讯云 COS/SMS 仅完成对接文档，未调用真实云 API 或发送短信。
+
+JDK 27 下，Lombok、Nacos 的部分传递依赖仍打印 Unsafe／final field 兼容性提示；上述测试全部通过。本次还观察到 SDK 多客户端关闭阶段的断连回调日志，不应把关闭日志当作业务功能失败，也不代表这些第三方提示已被修复。
