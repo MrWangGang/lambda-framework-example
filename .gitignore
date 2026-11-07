@@ -26,3 +26,8 @@ dist/
 nbdist/
 .nb-gradle/
 target/
+# Local credentials and test output
+.env
+.env.*
+!.env.example
+**/target/
