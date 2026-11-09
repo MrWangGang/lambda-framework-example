@@ -1,8 +1,11 @@
-package org.lambda.example.app.messaging;
+package org.lambda.example.app.service;
 
 import com.rabbitmq.client.AMQP;
 import jakarta.annotation.PreDestroy;
-import org.bson.Document;
+import org.bson.types.ObjectId;
+import org.lambda.example.app.entity.DeliveryReceiptEntity;
+import org.lambda.example.app.entity.DeliveryReceiptEntity.MessageDTO;
+import static org.lambda.example.app.repository.ProductRepository.objectId;
 import org.lambda.framework.common.util.sample.JsonUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -24,18 +27,10 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
-import java.util.UUID;
 
 @Service
 public class DelayedMessageService {
     private static final Logger log = LoggerFactory.getLogger(DelayedMessageService.class);
-    public record Message(String id, String content, Instant createdAt) {
-        public Message {
-            UUID.fromString(id);
-            if (content == null || content.isBlank() || content.length() > 10000 || createdAt == null)
-                throw new IllegalArgumentException("Invalid notification fields");
-        }
-    }
     private final Sender sender;
     private final Receiver receiver;
     private final ReactiveMongoTemplate mongo;
@@ -61,12 +56,12 @@ public class DelayedMessageService {
                     .block(Duration.ofSeconds(30));
             consumer = receiver.consumeManualAck(queue, new ConsumeOptions().qos(32))
                     .flatMap(delivery -> Mono.defer(() -> {
-                        Message message = JsonUtil.stringToObj(new String(delivery.getBody(), StandardCharsets.UTF_8), Message.class)
+                        MessageDTO message = JsonUtil.stringToObj(new String(delivery.getBody(), StandardCharsets.UTF_8), MessageDTO.class)
                                 .orElseThrow(() -> new IllegalArgumentException("Invalid message"));
-                        Query id = Query.query(Criteria.where("_id").is(message.id()));
+                        Query id = Query.query(Criteria.where("_id").is(objectId(message.id())));
                         Update receipt = new Update().setOnInsert("content", message.content())
                                 .setOnInsert("createdAt", message.createdAt()).setOnInsert("receivedAt", Instant.now());
-                        return mongo.upsert(id, receipt, "delivery_receipts").doOnSuccess(result -> delivery.ack());
+                        return mongo.upsert(id, receipt, DeliveryReceiptEntity.class).doOnSuccess(result -> delivery.ack());
                     }).onErrorResume(error -> {
                         log.error("Delivery failed; routing to dead-letter queue", error);
                         delivery.nack(false);
@@ -76,16 +71,20 @@ public class DelayedMessageService {
                     .subscribe(result -> {}, error -> log.error("Notification consumer stopped", error));
         };
     }
-    public Mono<Message> send(String content, long delayMillis) {
-        Message message = new Message(UUID.randomUUID().toString(), content, Instant.now());
+    public Mono<MessageDTO> send(DeliveryReceiptEntity.SendDTO input) {
+        long delayMillis = Long.parseLong(input.delayMillis());
+        if (delayMillis > 60000) {
+            return Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST, "delayMillis must be 0..60000"));
+        }
+        MessageDTO message = new MessageDTO(new ObjectId().toHexString(), input.content(), Instant.now());
         var properties = new AMQP.BasicProperties.Builder().deliveryMode(2).contentType("application/json")
                 .headers(Map.of("x-delay", delayMillis)).build();
         var outbound = new OutboundMessage(exchange, "notify", properties, JsonUtil.objToString(message).getBytes(StandardCharsets.UTF_8));
         return sender.sendWithPublishConfirms(Mono.just(outbound)).single().flatMap(result -> result.isAck()
                 ? Mono.just(message) : Mono.error(new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Broker did not confirm message")));
     }
-    public Mono<Document> receipt(String id) {
-        return mongo.findById(id, Document.class, "delivery_receipts")
+    public Mono<DeliveryReceiptEntity> receipt(DeliveryReceiptEntity.IdDTO input) {
+        return mongo.findById(objectId(input.id()), DeliveryReceiptEntity.class)
                 .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "Message not received yet")));
     }
     @PreDestroy

@@ -1,4 +1,4 @@
-package org.lambda.example.app.cache;
+package org.lambda.example.app.service;
 
 import org.lambda.framework.repository.operation.redis.ReactiveRedisOperation;
 import org.springframework.beans.factory.annotation.Value;

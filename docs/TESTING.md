@@ -4,13 +4,15 @@
 
 日期：2026-11-07。使用已有 JDK 27.0.1.0.3 与 IntelliJ IDEA 内置 Maven 3.9.16；未安装额外 Maven，未发布远程 Maven 构件。
 
-## 2026-11-07 业务验收结果
+## 2026-11-07 旧版业务验收结果
+
+本节记录旧版路由的历史基线。当前接口采用 POST 动作路径，见 README。
 
 - 框架 `clean install`：15 个 reactor 项目全部成功。
 - 示例 `clean package`：2 个 reactor 项目全部成功。
 - 仓库外 JUnit 验收：**11 项通过，0 失败，0 错误，0 跳过**。
 - 正式应用 HTTP 端到端验收：**22 项通过**，使用真实 MongoDB、Redis、RabbitMQ、Nacos 和 Qdrant。
-- 交付的 `scripts/run.sh` 和本地 `.env` 实际启动通过，`/api/info` 读取远程 greeting 与 `rs0`。
+- 交付的 `scripts/run.sh` 和本地 `.env` 实际启动通过，`/api/system/info` 读取远程 greeting 与 `rs0`。
 
 ## 独立测试
 
@@ -65,13 +67,9 @@ Nacos 删除配置后，客户端可能短暂返回缓存内容；清理断言�
 JDK 27 下，Lombok、Nacos 的部分传递依赖仍打印 Unsafe／final field 兼容性提示；上述测试全部通过。本次还观察到 SDK 多客户端关闭阶段的断连回调日志，不应把关闭日志当作业务功能失败，也不代表这些第三方提示已被修复。
 
 
-## 后续专项检查：通用分页未通过
+## 2026-11-09 回归结果
 
-框架 Paging/Paged 回归在仓库外执行：12 项，8 失败，0 错误，0 跳过。三个问题是排序没有传入 Pageable、JPQL 结果页码从 0 开始、Builder 默认值缺失。尚未修复。
-
-此检查不连接 ES/MySQL，也不改变 2026-11-07 商品游标分页通过的事实。两者测试对象不同，不能合并成“分页全部通过”。详细失败分布见[框架分页手册](https://github.com/MrWangGang/lambda-framework/blob/main/docs/DATA-AND-PAGINATION.md)。
-
-用户体系、RSocket 连接恢复、整体虚拟线程和 COS/SMS 仍没有完成端到端验收。文档中的设计片段不计入通过数量。
+Channel 直接检查 13 项通过，TCP 检查 8 项通过，通用分页 12 项通过。两个微服务、网关和示例共 26 项实机检查通过。验收包括 Mongo ObjectId 类型、枚举、单聊文字、群聊表情和媒体引用、HTTP NDJSON 双向交换、Redis、RabbitMQ 延迟回执、Qdrant、Nacos 配置读取，以及 PNG 和 MP4 分块字节传输。按名称清理了 Mongo 测试库、Redis 键、Qdrant 集合与 RabbitMQ 资源，并停止 JVM。
 
 ## 手工复核前的资源隔离
 

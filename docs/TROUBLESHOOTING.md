@@ -123,7 +123,7 @@ HTTP key 会增加 EXAMPLE_RESOURCE_PREFIX:cache: 前缀。检查数据库编号
 
 | 现象 | 说明 |
 |---|---|
-| 404 /api/products/page | 尚未实现页码分页；现有为 /products 游标 |
+| 找不到分页路由 | 使用 POST /api/product/page 或 POST /api/product/cursor |
 | 收藏列表只有 50 条 | 当前固定上限，无游标 |
 | 同 requestId 返回旧订单 | 参数相同的幂等结果 |
 | 同 requestId 返回 409 | 参数被改动 |

@@ -25,16 +25,16 @@ MongoDB 的集合和文档不需要照搬关系数据库的每一张表。先回
 
 内嵌和引用取决于访问及增长方式，模型可以随业务迭代。[MongoDB 建模原则](https://www.mongodb.com/docs/manual/data-modeling/best-practices/)
 
-## 2. 当前示例的真实模型
+## 2. 当前示例模型
 
-| 集合 | 事实与关系 |
-|---|---|
-| products | 商品现价、库存、版本 |
-| favorites | userId 与 productId 的多对多关系 |
-| purchases | 每条购买仅一种商品，保存数量与成交单价 |
-| delivery_receipts | 消息消费结果，以消息 ID 幂等 |
+| 集合 | 实体 | ID 与关键查询 |
+|---|---|---|
+| products | ProductEntity | ObjectId、分类与时间复合索引、乐观锁、String 金额 |
+| favorites | FavoriteEntity | ObjectId 主键与两端 ObjectId，唯一约束 userId + productId |
+| purchases | PurchaseEntity | ObjectId 主键，requestId 独立唯一索引 |
+| delivery_receipts | DeliveryReceiptEntity | ObjectId，消息重投按主键幂等更新 |
 
-当前没有 users 集合和身份验证；userId 是输入标识。当前 purchases 也不是完整订单中心，未实现支付、退款、履约、订单行列表。
+历史字符串主键、Decimal128 字段和旧采购幂等键需要迁移。使用新库验证时保留业务库原状。
 
 ## 3. 一对多：用户与少量地址
 
@@ -153,7 +153,7 @@ db.articles.createIndex({authorId:1, status:1, createdAt:-1, _id:-1})
 }
 ~~~
 
-为便于展示，JSON 金额写成字符串；Java 实体仍应定义 BigDecimal 并映射 Decimal128。不要在实际数据中混用字符串、Double 和 Decimal128 表示同一金额字段。
+金额在 API、Java 实体和数据库中统一为字符串。需要按数值排序或计算时定义明确的换算和索引策略，避免按字符串排序代替数值排序。
 
 设计约束：
 

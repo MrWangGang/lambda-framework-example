@@ -1,126 +1,207 @@
-# Lambda Framework Example 操作手册
+# Lambda Framework Example
 
-使用 **JDK 27 + Spring WebFlux** 的可运行后端示例，基于 [Lambda Framework](https://github.com/MrWangGang/lambda-framework)。一个应用连接 MongoDB 副本集、Redis、RabbitMQ、Nacos 和 Qdrant，演示请求校验、持久化、事务、消息确认及向量查询。
+这个示例演示用 Lambda Framework 接入 MongoDB 副本集、Redis、RabbitMQ 延迟消息、Nacos 配置和 Qdrant。所有业务 HTTP 接口用 POST 动作路径。实体、请求、响应类型与 Repository 的写法适合作为新项目参考。
 
-文档更新：**2026-11-09**。本仓库只有一个应用模块 `lambda-example-app`。本次扩充文档，没有新增登录、页码分页或 RPC 业务实现。
+## 构建、配置、运行
 
-## 1. 操作手册导航
+- JDK 27 和 IntelliJ IDEA 内置 Maven。
+- 先在框架仓库执行 `./scripts/mvn.sh clean install`。
+- 示例根目录执行 `cp .env.example .env`，填写环境变量。真实服务器、账号、Nacos 接入、COS、短信和 GitHub SSH 见本机《第三方配置.md》。
+- Nacos 准备 `APP_NAME.properties`，位于设定的 NAMESPACE/GROUP，示例需要 `example.greeting`。首次运行可按 [启动手册](docs/QUICKSTART.md) 创建。
+- `./scripts/run.sh` 使用本机 Maven 构建并启动。默认监听 127.0.0.1:8081，Ctrl+C 停止。
 
-| 任务 | 文档 |
+~~~bash
+curl -fsS -X POST http://127.0.0.1:8081/api/system/info \
+  -H 'Content-Type: application/json' -d '{}'
+~~~
+
+| 变量 | 用途 |
 |---|---|
-| 从零导入 IDEA、配置并启动 | [首次运行](docs/QUICKSTART.md) |
-| 查询每个接口的参数、返回、错误与 curl | [完整 API 手册](docs/API.md) |
-| 修改环境变量、地址、账号与资源前缀 | [配置字典](docs/CONFIGURATION.md) |
-| MongoDB 一对多、多对一、多对多与性能 | [数据建模规范](docs/DATA-MODELING.md) |
-| Docker、端口、防火墙、账号用途、备份与清理 | [部署运维](docs/OPERATIONS.md) |
-| 对接腾讯云 COS / 短信 | [云接口接入设计](docs/CLOUD-INTEGRATION.md) |
-| 复核历史测试、执行手工验收并清数据 | [验收与清理](docs/TESTING.md) |
-| 启动失败、认证失败、版本冲突 | [排错手册](docs/TROUBLESHOOTING.md) |
-| 接入用户体系、框架分页、RPC、虚拟线程 | [扩展开发](docs/EXTENDING.md) |
-| GitHub SSH、构建和推送 | [框架维护手册](https://github.com/MrWangGang/lambda-framework/blob/main/docs/OPERATIONS.md) |
+| JAVA_HOME、MAVEN_BIN | JDK 27 与已有 Maven 路径 |
+| SERVICE_HOST、SERVICE_USER、SERVICE_PASSWORD | 中间件地址与凭据 |
+| MONGODB_REPLICA_SET、MONGO_DATABASE | 副本集和业务库 |
+| EXAMPLE_RESOURCE_PREFIX | Redis 键、RabbitMQ 队列和 Qdrant 集合前缀 |
+| NACOS_NAMESPACE、NACOS_GROUP、NACOS_SERVER_ADDR | 配置与发现 |
+| NACOS_USERNAME、NACOS_PASSWORD | Nacos 凭据，可与业务服务分离 |
+| QDRANT_API_KEY | Qdrant API key |
+| APP_NAME、APP_BIND_ADDRESS、APP_REGISTER_IP、APP_PORT | 应用名、监听和注册地址 |
 
-## 2. 已实现的业务
+## API
 
-| 场景 | 实现 |
+请求格式为 `application/json`。HTTP 路径全部在 `/api` 下，参数均从请求体取得。下表中的 ObjectId 是 24 位十六进制字符串，向量点 ID 是 UUID。
+
+| POST 动作 | 请求体字段 | 用途 |
+|---|---|---|
+| /api/system/info | {} | 应用名、Nacos greeting 和副本集 |
+| /api/product/create | name、category、price、stock、status | 新增商品 |
+| /api/product/find | id | 按 ObjectId 读取 |
+| /api/product/page | category、page、size | 一基页码，Paged<ViewDTO> |
+| /api/product/cursor | category、limit、beforeTime、beforeId | 稳定复合游标 |
+| /api/product/update | id、version、product | product 使用新建字段，version 做乐观锁 |
+| /api/favorite/add | userId、productId | 幂等收藏 |
+| /api/favorite/remove | userId、productId | 移除收藏 |
+| /api/favorite/list | userId | 最近收藏 |
+| /api/purchase/create | requestId、userId、productId、quantity | 事务扣库存、独立幂等键 |
+| /api/cache/put | key、value、ttlSeconds | 写入前缀键及 TTL |
+| /api/cache/find | key | 读取缓存，返回文本 |
+| /api/cache/remove | key | 删除缓存 |
+| /api/message/sendDelayed | content、delayMillis | 延迟消息，返回 ObjectId 字符串 |
+| /api/message/findReceipt | id | 查询投递回执 |
+| /api/vector/upsert | id、vector、category | 写入三维向量 |
+| /api/vector/search | vector、limit | 相似向量搜索 |
+
+~~~bash
+curl -fsS -X POST http://127.0.0.1:8081/api/product/create \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Java","category":"book","price":"12.30","stock":"5","status":"active"}'
+
+curl -fsS -X POST http://127.0.0.1:8081/api/product/page \
+  -H 'Content-Type: application/json' \
+  -d '{"category":"book","page":"1","size":"20"}'
+
+curl -fsS -X POST http://127.0.0.1:8081/api/vector/search \
+  -H 'Content-Type: application/json' \
+  -d '{"vector":["1","0","0"],"limit":"5"}'
+~~~
+
+创建返回的 id、version 和游标以实际值为准。金额以字符串保存，库存和数量字符串在原子更新处转换。状态值为 active 或 inactive。旧版 REST 路由、String 主键和 Decimal128 金额需要迁移。先在新库验收。
+
+## 源码布局与框架使用
+
+| 包 | 内容 |
 |---|---|
-| 商品 | Decimal128 金额、复合索引、游标分页、版本条件更新 |
-| 收藏 | 多对多关系集合、唯一索引、幂等添加与删除 |
-| 购买 | MongoDB 多文档事务、条件扣库存、requestId 幂等、有限冲突重试 |
-| 缓存 | Redis ACL、键前缀、TTL、查询和删除 |
-| 延迟通知 | 插件交换机、持久消息、发布确认、落库后 ACK、死信队列 |
-| 向量检索 | Qdrant API Key、3 维 Cosine 向量写入与查询 |
-| 配置和发现 | Nacos 配置导入、动态 greeting、应用注册与注销 |
+| org.lambda.example.app.entity | ProductEntity、FavoriteEntity、PurchaseEntity、DeliveryReceiptEntity 与所属静态 DTO |
+| org.lambda.example.app.controller | ExampleController 与缓存、向量等无实体归属 DTO |
+| org.lambda.example.app.service | 商品、缓存、延迟消息、向量业务 |
+| org.lambda.example.app.repository | ProductRepository、ObjectId 查询、框架分页 |
+| org.lambda.example.app.config | 框架 Mongo、Redis、RabbitMQ 配置与事务 |
 
-示例的用户 ID 来自请求输入，尚无登录权限保护。默认只监听本机 `127.0.0.1:8081`，适合作为内部开发起点。
+分页按分类过滤、createdAt 和 ObjectId 排序。游标把两个边界字段一起传入。购买的 requestId 是业务幂等键，MongoDB 主键是独立 ObjectId。延迟消息消费后幂等写回执再 ACK。Redis 和 Qdrant 用独立业务前缀。
 
-## 3. 快速启动
+## RPC、网关和聊天验证
 
-前提：JDK 27、已有 IDEA Maven、可达的五项中间件。MongoDB 是 rs0 副本集，RabbitMQ 已启用兼容延迟插件。
+chat-api 与 chat-service 是仓库外验收项目，分别使用 `org.chat.api` 和 `org.chat.service`。启动真实网关进程，验证 Java RPC 请求 DTO、`Paged<ViewDTO>`、HTTP NDJSON request-stream 与 request-channel。单聊文字、群聊表情、图片和视频引用通过 MongoDB 写入与读取，PNG 与分块 MP4 通过网关按字节转发。完整网关配置和客户端命令见 [框架 README](https://github.com/MrWangGang/lambda-framework#readme)。
 
-~~~bash
-# 两个仓库放在同级目录
-cd ../lambda-framework
-export JAVA_HOME='/实际的/JDK27/Contents/Home'
-./scripts/mvn.sh -B clean install
-cd ../lambda-framework-example
-cp .env.example .env
-chmod 600 .env
-# 编辑 .env，填写自己的环境
+按测试清单清理 MongoDB 临时库、Redis 测试键、Qdrant 集合与 RabbitMQ 测试资源。生产项目按业务实现登录、群成员权限、离线同步与媒体文件授权。用户继承、ObjectId、枚举、分页与技能规则见下文。
+
+## 相关操作手册
+
+[启动](docs/QUICKSTART.md) · [API](docs/API.md) · [配置](docs/CONFIGURATION.md) · [建模](docs/DATA-MODELING.md) · [部署](docs/OPERATIONS.md) · [腾讯云](docs/CLOUD-INTEGRATION.md) · [验收](docs/TESTING.md) · [排错](docs/TROUBLESHOOTING.md) · [扩展](docs/EXTENDING.md)
+
+## Java 后端开发与架构规范
+
+版本日期为 **2026-11-09**。本规范供开发者和智能体统一 Java 项目的结构、接口、数据模型和验收方式。部署地址、账号、云资源与 GitHub 接入信息集中到本地《第三方配置.md》。仓库中的示例使用本机地址和环境变量。
+
+### 项目名称与命名
+
+新建项目或微服务前收集项目名称。缺少名称时询问。已有项目沿用已确认的名称与包名前缀。Maven artifactId、Spring 应用名和服务发现名使用项目名称。Java 包使用小写标识符，连字符映射为包层级，组织前缀按项目约定。示例中 chat-api 对应 `org.chat.api`，chat-service 对应 `org.chat.service`。
+
+| 包 | 类名示例 | 职责 |
+|---|---|---|
+| entity | ChatMessageEntity | 集合或表的实体及所属静态 DTO |
+| controller | ChatMessageController | HTTP 或 RSocket 参数校验、响应映射 |
+| service | ChatMessageService | 业务规则、事务、协作编排 |
+| repository | ChatMessageRepository | BSON 查询、更新、索引、分页 |
+| rpc | ChatMessageRpc | 跨服务接口 |
+| enums 或所属实体 | MessageKind | 值域、持久化值、显示文案 |
+| config | MongoConfiguration | 连接与运行配置 |
+
+类名采用业务名与职责后缀。Service 只有一种实现时直接使用业务 Service 类，有多个实现或跨模块契约时再拆接口。Repository 以归属实体命名。请求 DTO 使用 `SendDTO`、`FindDTO`、`PageDTO` 等动作名，多个查询可以共享 `ViewDTO`。
+
+### 实体、DTO 与接口
+
+- 每个数据库表或集合对应一个实体。所属请求、视图和 RPC DTO 放到实体的 `public static` 内部类或 record。Service 复用 Controller 的 DTO。
+- DTO 可继承实体来复用合适的字段。涉及密码哈希、权限、审计、版本与内部状态时，明确选择允许读写的字段。缓存操作等缺少对应数据库实体的请求使用 Controller 内部静态 DTO。
+- 所有业务 HTTP 接口使用 POST 动作路径，例子为 `/api/message/send`、`/api/product/page`。条件与 ID 放请求体，空请求用空 DTO。RPC 同样声明具体请求 DTO 和 `Mono<T>`、`Flux<T>`。
+- 业务金额、普通业务标量以字符串建模，禁止 BigDecimal。技术字段保留原生语义，例如 MongoDB ObjectId、事务库存计数、乐观锁版本、分页计数、日期和向量维度。业务 DTO 的金额、数量等以字符串入参，Repository 或第三方客户端在明确边界转换。
+- CORS 预检、WebSocket 握手和基础设施协议遵从各自协议。业务入口仍统一 POST。
+
+~~~java
+@Document("chat_messages")
+public class ChatMessageEntity extends UnifyPO<ObjectId> {
+    private ObjectId conversationId;
+    private MessageKind kind;
+    private String content;
+
+    public static record FindDTO(String id) {}
+    public static record SendDTO(String conversationId, MessageKind kind, String content) {}
+    public static record ViewDTO(String id, MessageKind kind, String content) {}
+}
 ~~~
 
-在 Nacos 创建：
+实际实体需提供 Spring Data 可映射的构造器或访问方法。Service 采用上述 DTO 时无需复制一套 Service 参数类。
 
-| 字段 | 值 |
+### MongoDB 类型、枚举与查询
+
+MongoDB 主键和关联字段用 BSON `ObjectId`。HTTP 与 RPC 使用 24 位十六进制字符串，边界用 `ObjectId.isValid` 校验后转换。Repository 泛型和查询参数使用 `ObjectId`，方法名与字段名称保持一致。
+
+~~~java
+public interface ChatMessageRepository extends ReactiveMongoRepository<ChatMessageEntity, ObjectId> {
+    @Query("{ '_id': ?0 }")
+    Mono<ChatMessageEntity> findWithQuery(ObjectId id);
+}
+~~~
+
+联调实测中，`findById(ObjectId)`、`@Query` 绑定 ObjectId、带实体映射的 `ReactiveMongoTemplate.findById(hex, Entity.class)` 均命中。原生 `Filters.eq("_id", hex)` 查不到，改成绑定 ObjectId 即命中。MongoDB 的 `@Query` 使用 BSON 查询表达式。原生驱动、Document 和聚合匹配应明确 BSON 类型，关联字段也需一致。历史字符串 ID、DECIMAL128 金额和旧索引应经过迁移后再由新实体读取。
+
+数据库实体包含枚举字段时，枚举实现 `org.lambda.framework.common.enums.ConverterEnum`，提供 `getValue()` 与 `getDescription()`。持久化值保持稳定，例如 `text`、`emoji`、`image`、`video`。框架的 Mongo 配置注册枚举读写转换器。本次联调已核对 MongoDB 存储字符串值以及 API 往返。
+
+### 用户与会话
+
+业务用户实体可继承 `UnifyPO<ObjectId>` 并实现 `SecurityLoginUser<ObjectId>`，复用 id、createTime、updateTime。登录快照在用户实体内定义静态 DTO，可用十六进制字符串实现 `SecurityLoginUser<String>`。快照保留昵称、状态和必要的权限版本，避免包含密码哈希、验证码和敏感业务字段。
+
+`PrincipalFactory` 是会话抽象，`SecurityPrincipalHolder` 从 Reactor Context 读取当前用户。登录后创建会话，从可信入口验证令牌，并在 Service 按实际身份判断资源权限。认证与授权 Redis 使用独立配置前缀，核对所用 ACL 模式及框架模块能力。应用负责覆盖实际身份与权限规则。
+
+### 分页和索引
+
+`Paging` 对业务使用从 1 开始的页码，默认 1/10。框架转换为从 0 开始的 `PageRequest`。`Paged<T>` 复用 page、size、pages、total、records。页码和大小在入口校验，业务列表限制每页最多 100。RPC 保留 `Mono<Paged<ViewDTO>>` 的完整泛型。
+
+`ReactiveUnifyPagingRepositoryOperation.sqlPaging` 提供 count 与 query 的协调，也可给 Mongo Repository 使用。两者传相同过滤条件，查询应用 Pageable。排序使用可索引的稳定键，例如 `createdAt DESC, _id DESC`。聊天历史等长期增长列表使用复合游标，游标中的 ID 转为 ObjectId。业务需考虑 count 与查询分开执行时的并发更新。
+
+### 数据库、缓存和运行配置
+
+使用现有 JDK 27 与 IDEA 自带 Maven。框架先执行 `./scripts/mvn.sh install`，应用随后构建。独立 RSocket 服务配置 `spring.main.web-application-type=none`，网关和 HTTP 服务使用 `reactive`。
+
+| 功能 | 用法 |
 |---|---|
-| Namespace ID | `public` |
-| Group | `LAMBDA_EXAMPLE` |
-| Data ID | `lambda-example-app.properties` |
-| 格式 | Properties |
+| MongoDB | repository 模块继承 DefaultReactiveMongoRepositoryConfig，使用 lambda.repository.mongo.host/user/password/auth-database/database/deploy/replica。副本集事务配置 cluster 与真实 replica 名。 |
+| Redis | repository 模块继承 DefaultReactiveRedisRepositoryConfig，使用 lambda.repository.redis.host/username/password/database/deploy。复用连接，以业务前缀与 TTL 管理键。 |
+| RabbitMQ | mq 模块继承 DefaultReactiveRabbitMQConfig。延迟交换机需要插件，处理结果落库后再确认消费。 |
+| Nacos | 配置 namespace、group、服务名与注册端口。区分 HTTP 端口与 RSocket 端口。 |
+| Qdrant | 示例通过 WebClient 访问，按集合定义维度、距离函数、ID 与 payload。 |
+| 对象存储与短信 | 环境值和对接资料见本地《第三方配置.md》。 |
 
-内容：
+### RSocket、网关与聊天
 
-~~~properties
-example.greeting=Hello from Nacos
+RPC 客户端使用 `@RSocketRpcDiscorvery`、`@RSocketRpcType`，由 `@RSocketRpc` 注入。服务端使用与契约一致的 route，例如 `chat-service.chatMessageRpc.find`。普通请求和服务端流在网关以 `rb://服务名` 路由。服务端流可以用 Accept 请求 NDJSON，逐条刷新。双向流通过 POST NDJSON 或原生 RSocket requestChannel 交换 DTO。
+
+保持首条消息、单次订阅、上下文、背压和取消。处理首信号时区分数据、错误与完成。遵循 RSocket 和 Spring 的 Payload 所有权，写测试确认释放行为。部署经过 HTTP 代理时实测全双工与缓冲策略。
+
+私聊与群聊用会话 ID 区分，消息包含发送人、类型、内容、时间。表情用 Unicode，图片与视频的消息内容用对象存储 key。网关可按字节转发小二进制。媒体文件上传和下载使用独立链路，权限、群成员校验、消息幂等和离线拉取由业务实现。
+
+### 验收与交付
+
+先复现旧行为，再在相同条件验证修复。性能记录负载、吞吐、延迟、CPU 与进程内存。测试使用唯一 MongoDB 数据库、Redis 前缀、Qdrant 集合与 RabbitMQ 资源名，结束后先停应用，再按清单清理并复查。临时测试代码和日志放仓库外。README 记录启动、接口、框架用法、验收结果和技能。提交前核对真实环境配置与凭据是否混入 Git。
+
+## 开发规范技能
+
+使用 `$lambda-java-backend` 应用以下规则。技能源文件位于框架仓库的 `skills/lambda-java-backend/SKILL.md`。
+
+~~~markdown
+---
+name: lambda-java-backend
+description: 按统一风格开发、修改或审查 Lambda Framework Java 后端项目。适用于项目命名、POST 接口、实体内 DTO、RSocket RPC、MongoDB、分页、用户体系及交付验收。
+---
+
+新建项目或微服务前确认项目名称。用户已提供时直接使用。缺少名称时询问，等待期间可以检查现有代码和准备设计。用已确认的名称派生 Maven artifactId、Java 基础包、Spring 应用名和服务发现名。
+
+仓库版规范位于 `../../docs/Java后端开发与架构规范.md`，本机安装版随技能提供 `references/Java后端开发与架构规范.md`。环境值从本地《第三方配置.md》或环境变量读取。提交前检查真实凭据是否混入 Git。
+
+- 业务 HTTP 接口采用 POST 动作路径与请求 DTO。RPC 同样使用 DTO 与 Mono 或 Flux。
+- 每个数据库表或集合对应一个实体。所属 DTO 放实体的静态内部类型。Service 复用 Controller 的 DTO。缓存等无实体归属的请求放 Controller 静态类型。
+- Mongo 主键与关联 ID 使用 ObjectId。HTTP 和 RPC 使用十六进制字符串，在 Repository 绑定 BSON 时转换。枚举实现 ConverterEnum。业务金额与标量用字符串，技术字段按规范转换。
+- 复用框架分页、异常、Reactor Context 和数据库连接。区分 SecurityLoginUser、UnifyPO、PrincipalFactory。
+- RSocket Channel 保持首消息、单次订阅、背压、取消和 Payload 所有权。网关 JSON 聚合有上限，NDJSON 逐条输出。聊天 DTO 描述文字、表情与媒体引用。
+- 使用现有 JDK 和 IDEA Maven。先复现再修复，在相同条件复测。使用隔离测试资源，验收后按名称清理，核对数据并关闭本次启动的 JVM。
+- README 记录项目运行与契约。报告区分实测、设计方案和未测范围。
 ~~~
-
-~~~bash
-./scripts/run.sh
-~~~
-
-另开终端验证：
-
-~~~bash
-curl -i http://127.0.0.1:8081/api/info
-~~~
-
-预期为 200，JSON 包含 application、greeting、replicaSet。`replicaSet` 是配置值，本接口不是数据库实时健康检查；完整验证还需执行业务请求。
-
-## 4. 代码目录
-
-~~~text
-lambda-example-app/src/main/
-├── java/org/lambda/example/app/
-│   ├── Application.java
-│   ├── config/InfrastructureConfiguration.java
-│   ├── catalog/Models.java
-│   ├── catalog/CatalogService.java
-│   ├── cache/CacheService.java
-│   ├── messaging/DelayedMessageService.java
-│   ├── vector/VectorService.java
-│   └── web/ExampleController.java
-└── resources/application.properties
-scripts/
-├── mvn.sh
-└── run.sh
-docs/
-.env.example
-~~~
-
-不保留临时测试源码、真实凭据和构建产物。`.env` 被 Git 忽略；`scripts/run.sh` 会构建 JAR 后启动，不会安装 Maven。
-
-## 5. 状态与限制
-
-- 2026-11-07：框架 15 个 reactor 项目、示例 2 个 reactor 项目构建通过；仓库外 JUnit 11 项、HTTP 业务验收 22 项通过。
-- 示例分页是 `items / nextBeforeTime / nextBeforeId` 复合游标。
-- 框架另有 `Paging/Paged` 页码分页，已发现 3 类问题，外部回归 12 项中 8 项失败，未修复；示例没有 `/api/products/page`。
-- 用户体系、跨服务 RPC、整体虚拟线程改造尚未在本示例完成接入与验收。
-- 缓存、消息、向量接口独立演示，不会随商品变更自动同步，也不提供跨库原子提交。
-- 收藏列表最多返回 50 条；当前没有收藏游标接口。
-- 当前没有商品删除、订单查询/取消、支付、COS 上传或短信发送端点。
-- 单节点 MongoDB 副本集、Nacos standalone 不具备高可用；没有生产规模压测结论。
-
-## 6. 推荐阅读路径
-
-先照 QUICKSTART 启动并创建一个商品，再按 API 手册完成分页、更新、收藏、购买、缓存、消息和向量操作。每次验收使用独立数据库及资源前缀，最后按 TESTING 清理。
-
-业务增长时先读 DATA-MODELING，再扩展用户认证和查询索引。不要把文档中的未来设计当成已经发布的接口。
-
-## 7. 维护命令
-
-~~~bash
-./scripts/mvn.sh -B clean package
-git diff --check
-./scripts/mvn.sh clean
-~~~
-
-package 是编译打包；历史外部测试程序已移除，不能把这条命令视为重跑全部验收。运行记录和新增发现见 TESTING。

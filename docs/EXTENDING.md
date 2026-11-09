@@ -44,19 +44,9 @@
 
 不要仅增加用户类就宣称登录已经接通。当前未实现 /login、/logout、/register 等端点。
 
-## 3. 框架页码分页：待修复后接入
+## 3. 框架页码分页
 
-框架已有 Paging、Paged 和五种分页适配入口。当前发现：
-
-- PageRequest.withSort 返回值未接收。
-- JPQL 风格页码为 0 起始。
-- Builder 默认值缺失。
-
-外部 12 项回归中 8 项失败，尚未修复。现有商品游标分页是另一条实现，历史测试通过不能覆盖上述问题。
-
-后续可新增一个明确的页码入口，返回 page/size/total/pages/records。实现时应限制 size、排序字段和最大翻页深度，使用相同条件分别查询记录和 count，再补空页/末页/重复排序值等测试。
-
-当前不存在 /api/products/page，也不能通过给现有 /products 增加 page 参数获得该能力。
+POST /api/product/page 使用 ProductEntity.PageDTO，ProductRepository 通过 sqlPaging 组合 Mongo count、查询和稳定排序。返回 Paged<ProductEntity.ViewDTO>。大列表采用 /api/product/cursor。
 
 ## 4. RSocket：独立服务的接入
 

@@ -12,7 +12,7 @@
 - 远程 MongoDB、Redis、RabbitMQ、Nacos、Qdrant 的连接信息。
 - Nacos 业务账号能够读取配置、注册和注销实例。
 
-服务器详情与实际凭据在本地私有《开发规范.md》。本手册用占位符说明操作，不包含私钥或生产口令。
+服务器详情与实际凭据在本地私有《第三方配置.md》。本手册用占位符说明操作，不包含私钥或生产口令。
 
 ## 2. 安装框架到本机 Maven 缓存
 
@@ -134,7 +134,7 @@ example.greeting=Hello from Nacos
 另开终端：
 
 ~~~bash
-curl -i http://127.0.0.1:8081/api/info
+curl -i -X POST http://127.0.0.1:8081/api/system/info -H 'Content-Type: application/json' -d '{}'
 ~~~
 
 预期 JSON：
@@ -153,7 +153,7 @@ curl -i http://127.0.0.1:8081/api/info
 
 1. 在 Nacos 修改 example.greeting 并发布。
 2. 等待客户端收到配置变更。
-3. 再次请求 /api/info。
+3. 再次请求 /api/system/info。
 4. 确认 greeting 变更，application 和 replicaSet 不应因该操作变化。
 
 不是所有配置都支持运行中重建连接。数据库地址、凭据、资源前缀等变更通常需要有计划地重启应用并处理旧资源。

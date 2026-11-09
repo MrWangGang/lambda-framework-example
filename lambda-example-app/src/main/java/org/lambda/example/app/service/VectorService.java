@@ -1,4 +1,4 @@
-package org.lambda.example.app.vector;
+package org.lambda.example.app.service;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationRunner;
