@@ -1,8 +1,10 @@
-# 验收记录
+# 验收记录与手工复核操作手册
+
+文档补充：2026-11-09。下面 11 项 JUnit 与 22 项 HTTP 结果是历史实际执行记录，本次文档维护未重新运行这些业务验收。之后的框架通用分页专项检查发现失败，见文末；不能解读为当前所有功能全部通过。
 
 日期：2026-11-07。使用已有 JDK 27.0.1.0.3 与 IntelliJ IDEA 内置 Maven 3.9.16；未安装额外 Maven，未发布远程 Maven 构件。
 
-## 最终结果
+## 2026-11-07 业务验收结果
 
 - 框架 `clean install`：15 个 reactor 项目全部成功。
 - 示例 `clean package`：2 个 reactor 项目全部成功。
@@ -61,3 +63,176 @@ Nacos 删除配置后，客户端可能短暂返回缓存内容；清理断言�
 单节点 MongoDB 副本集与 Nacos standalone 没有高可用。本次未进行生产规模压力、故障切换、备份恢复演练，未部署 MySQL、Kafka、Elasticsearch、ZooKeeper，未实机验证跨服务 RPC。腾讯云 COS/SMS 仅完成对接文档，未调用真实云 API 或发送短信。
 
 JDK 27 下，Lombok、Nacos 的部分传递依赖仍打印 Unsafe／final field 兼容性提示；上述测试全部通过。本次还观察到 SDK 多客户端关闭阶段的断连回调日志，不应把关闭日志当作业务功能失败，也不代表这些第三方提示已被修复。
+
+
+## 后续专项检查：通用分页未通过
+
+框架 Paging/Paged 回归在仓库外执行：12 项，8 失败，0 错误，0 跳过。三个问题是排序没有传入 Pageable、JPQL 结果页码从 0 开始、Builder 默认值缺失。尚未修复。
+
+此检查不连接 ES/MySQL，也不改变 2026-11-07 商品游标分页通过的事实。两者测试对象不同，不能合并成“分页全部通过”。详细失败分布见[框架分页手册](https://github.com/MrWangGang/lambda-framework/blob/main/docs/DATA-AND-PAGINATION.md)。
+
+用户体系、RSocket 连接恢复、整体虚拟线程和 COS/SMS 仍没有完成端到端验收。文档中的设计片段不计入通过数量。
+
+## 手工复核前的资源隔离
+
+每次演练使用新的标识，例如 lambda_manual_20261109_a。下述名字只是示例，执行前换成本次唯一值。
+
+在私有 .env 中同时修改：
+
+~~~bash
+MONGO_DATABASE='lambda_manual_20261109_a'
+EXAMPLE_RESOURCE_PREFIX='lambda_manual_20261109_a'
+APP_NAME='lambda-manual-20261109-a'
+NACOS_GROUP='LAMBDA_MANUAL'
+~~~
+
+提前在同 namespace / group 创建 lambda-manual-20261109-a.properties，内容只放测试 greeting。不要覆盖正式默认 Data ID。
+
+记录：
+
+- 两仓库提交号及 Java / Maven。
+- Mongo 数据库、资源前缀、Nacos namespace/group/dataId。
+- HTTP 地址、开始时间、创建的商品/订单/消息/向量 ID。
+- 每项结果、异常、清理结果。
+
+## 按顺序复核业务
+
+使用 [API 手册](API.md) 的命令。以下表格是操作与判定，不是本次新执行结果。
+
+| 顺序 | 操作 | 通过条件 |
+|---:|---|---|
+| 1 | /info、Nacos 服务列表 | 应用名和端口正确 |
+| 2 | 发布不同 greeting 再查询 | 运行中读取新值 |
+| 3 | 同分类创建至少 5 个商品 | 金额、库存、ID 正确 |
+| 4 | page limit=2 连续游标翻页 | 5 条全部出现一次，末页游标空 |
+| 5 | 空分类、limit=0/101、单边游标 | 400 |
+| 6 | 正确 version 更新，再用旧 version 更新 | 前者成功、后者 409 |
+| 7 | 同用户重复收藏，再取消两次 | 不重复关系，取消幂等 |
+| 8 | 库存 3 的商品购买 2 | 库存剩 1、订单只一条 |
+| 9 | 重复同 requestId 同参数 | 库存不再减少 |
+| 10 | 同 requestId 改 quantity | 409 |
+| 11 | 库存不足购买 | 409，无新订单，无负库存 |
+| 12 | 两个并发请求争抢最后库存 | 不超卖，失败请求不留订单 |
+| 13 | Redis set/get/delete 与短 TTL | 值一致、删除数量正确、到期 404 |
+| 14 | 延迟消息 2000ms | 发布确认后到期出现唯一回执 |
+| 15 | 重复相同 messageId（专门工具投递） | 回执不被重复覆盖 |
+| 16 | 无效消息投到专用队列 | 死信增加，消费者仍工作 |
+| 17 | 合法向量写入与 query | 命中该 UUID |
+| 18 | 非法 UUID、2 维、全零、非法 limit | 400 |
+
+并发库存验证是正确性测试，不是压测。消息重复投递需要复用同一消息 ID；重复调用现有 HTTP POST 会生成新 ID，不能用来证明消费幂等。
+
+## 清理顺序
+
+先停止测试应用，等待消费者和 Nacos 注册退出，再删除测试资源。这样不会边清理边被运行中的应用重新创建。
+
+### A. MongoDB 专用库
+
+使用 mongosh 登录后，先选择本次测试库，查看名称和集合。示意：
+
+~~~javascript
+use lambda_manual_20261109_a
+db.getName()
+db.getCollectionNames()
+db.products.countDocuments({})
+db.purchases.countDocuments({})
+~~~
+
+确认是专用测试库，再执行带名称保护的删除：
+
+~~~javascript
+const targetName = db.getName();
+if (!targetName.startsWith("lambda_manual_")) {
+  throw new Error("Refuse to delete a non-test database");
+}
+db.dropDatabase();
+~~~
+
+删除后重新列库确认。不要对 lambda_example、admin、config、local 或未知库执行本段操作。
+
+### B. Redis
+
+API 的 DELETE 可以删除已记录的测试缓存键；停止应用后也可以登录 Redis，限定本次前缀扫描：
+
+~~~text
+SCAN 0 MATCH lambda_manual_20261109_a:cache:* COUNT 100
+~~~
+
+继续扫描直到游标回到 0。对明确列出的键执行 UNLINK，例如：
+
+~~~text
+UNLINK lambda_manual_20261109_a:cache:manual_welcome
+~~~
+
+确认前缀键数归零。不执行 KEYS *、FLUSHDB 或 FLUSHALL 清理共享环境。TTL 到期可以辅助清理，但要核验，不只等待后宣称已清空。
+
+### C. RabbitMQ
+
+在管理控制台筛选完整测试前缀，先停止消费者，再删除两条测试队列及两个测试交换机：
+
+~~~text
+lambda_manual_20261109_a.notifications
+lambda_manual_20261109_a.notifications.dead
+lambda_manual_20261109_a.delayed
+lambda_manual_20261109_a.delayed.dead
+~~~
+
+延迟消息可能尚在延迟交换机中，不能只 purge 业务队列就认为完成。删除仅限此次测试创建的拓扑，保留其他应用资源。
+
+### D. Qdrant
+
+在已注入 SERVICE_HOST / QDRANT_API_KEY 的终端，使用精确测试集合名：
+
+~~~bash
+export TEST_COLLECTION='lambda_manual_20261109_a_vectors'
+case "$TEST_COLLECTION" in
+  lambda_manual_*_vectors) ;;
+  *) printf '%s\n' 'Refuse to delete a non-test collection' >&2; exit 1 ;;
+esac
+curl -fsS -X DELETE \
+  -H "api-key: $QDRANT_API_KEY" \
+  "http://$SERVICE_HOST:6333/collections/$TEST_COLLECTION"
+~~~
+
+再次 GET 指定集合应不存在，列表中不再出现。不要删除默认 lambda_example_vectors 或其他业务集合。
+
+### E. Nacos
+
+- 确认测试实例已注销。
+- 删除精确 namespace/group/dataId 的测试配置。
+- 若留下无实例的专用服务定义，核对名称后删除。
+- 通过服务端确认，不以 SDK 本地缓存作为删除依据。
+- 保留正式 lambda-example-app.properties。
+- 配置历史与审计记录按产品策略保留，不要求清除审计痕迹。
+
+## 清理验收表
+
+| 对象 | 判定 |
+|---|---|
+| 测试应用进程 | 已停止 |
+| Mongo 专用库 | 不存在 |
+| Redis 测试前缀 | 0 个键 |
+| Rabbit 测试队列/交换机 | 不存在 |
+| Qdrant 测试集合 | 不存在 |
+| Nacos 活动配置、实例、空服务定义 | 无本次测试资源 |
+| 默认业务资源 | 未被误删 |
+| 本地构建产物 | 按需 mvn clean |
+| 临时验收源码 | 不提交仓库 |
+| 日志证据 | 保留必要结果并去除凭据 |
+
+## 报告模板
+
+~~~text
+验收时间与时区：
+框架 / 示例提交号：
+服务与客户端版本：
+资源隔离名称：
+实际执行用例：
+通过 / 失败 / 跳过：
+失败原因与复现步骤：
+已知未覆盖内容：
+资源清理结果：
+日志位置：
+~~~
+
+只在重新执行后填写新的通过数量。文档修订、编译成功和服务 running 分别是不同层面的证据。
