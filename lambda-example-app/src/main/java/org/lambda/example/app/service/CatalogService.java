@@ -27,8 +27,6 @@ import org.lambda.example.app.entity.PurchaseEntity;
 import org.lambda.example.app.repository.ProductRepository;
 import org.lambda.framework.repository.operation.Paged;
 
-import static org.lambda.example.app.repository.ProductRepository.objectId;
-
 @Service
 public class CatalogService {
     private final ReactiveMongoTemplate mongo;
@@ -59,10 +57,10 @@ public class CatalogService {
         return mongo.insert(new ProductEntity(new ObjectId(), input.name(), input.category(),
                 input.price(), Integer.parseInt(input.stock()), null, Instant.now(), input.status()));
     }
-    public Mono<ProductEntity> get(String id) {
-        return products.findById(objectId(id)).switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "Product not found")));
+    public Mono<ProductEntity> get(ObjectId id) {
+        return products.findById(id).switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "Product not found")));
     }
-    public Mono<ProductEntity.CursorResultDTO> list(String category, int limit, Instant beforeTime, String beforeId) {
+    public Mono<ProductEntity.CursorResultDTO> list(String category, int limit, Instant beforeTime, ObjectId beforeId) {
         if (limit < 1 || limit > 100 || category == null || category.isBlank()
                 || (beforeTime == null) != (beforeId == null)) {
             return Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST, "Use category, limit 1..100, and both cursor fields"));
@@ -70,46 +68,46 @@ public class CatalogService {
         Criteria criteria = Criteria.where("category").is(category);
         if (beforeTime != null) criteria = criteria.andOperator(new Criteria().orOperator(
                 Criteria.where("createdAt").lt(beforeTime),
-                new Criteria().andOperator(Criteria.where("createdAt").is(beforeTime), Criteria.where("_id").lt(objectId(beforeId)))));
+                new Criteria().andOperator(Criteria.where("createdAt").is(beforeTime), Criteria.where("_id").lt(beforeId))));
         Query query = Query.query(criteria).with(Sort.by(Sort.Direction.DESC, "createdAt", "_id")).limit(limit + 1);
         return mongo.find(query, ProductEntity.class).collectList().map(rows -> {
             boolean more = rows.size() > limit;
             var items = more ? rows.subList(0, limit) : rows;
             var last = items.isEmpty() ? null : items.getLast();
             return new ProductEntity.CursorResultDTO(items.stream().map(ProductEntity.ViewDTO::from).toList(),
-                    more ? last.createdAt() : null, more ? last.id().toHexString() : null);
+                    more ? last.createdAt() : null, more ? last.id() : null);
         });
     }
-    public Mono<ProductEntity> update(String id, long version, ProductEntity.SaveDTO input) {
-        Query query = Query.query(Criteria.where("_id").is(objectId(id)).and("version").is(version));
+    public Mono<ProductEntity> update(ObjectId id, long version, ProductEntity.SaveDTO input) {
+        Query query = Query.query(Criteria.where("_id").is(id).and("version").is(version));
         Update update = new Update().set("name", input.name()).set("category", input.category())
                 .set("price", input.price()).set("stock", Integer.parseInt(input.stock()))
                 .set("status", input.status()).inc("version", 1);
         return mongo.findAndModify(query, update, FindAndModifyOptions.options().returnNew(true), ProductEntity.class)
                 .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.CONFLICT, "Product version changed or product missing")));
     }
-    public Mono<Void> favorite(String userId, String productId) {
-        Query query = Query.query(Criteria.where("userId").is(objectId(userId)).and("productId").is(objectId(productId)));
-        Update update = new Update().setOnInsert("userId", objectId(userId)).setOnInsert("productId", objectId(productId))
+    public Mono<Void> favorite(ObjectId userId, ObjectId productId) {
+        Query query = Query.query(Criteria.where("userId").is(userId).and("productId").is(productId));
+        Update update = new Update().setOnInsert("userId", userId).setOnInsert("productId", productId)
                 .setOnInsert("createdAt", Instant.now());
         return get(productId).then(mongo.upsert(query, update, FavoriteEntity.class))
                 .onErrorResume(DuplicateKeyException.class, error -> Mono.empty()).then();
     }
-    public Mono<Void> unfavorite(String userId, String productId) {
-        return mongo.remove(Query.query(Criteria.where("userId").is(objectId(userId)).and("productId").is(objectId(productId))), FavoriteEntity.class).then();
+    public Mono<Void> unfavorite(ObjectId userId, ObjectId productId) {
+        return mongo.remove(Query.query(Criteria.where("userId").is(userId).and("productId").is(productId)), FavoriteEntity.class).then();
     }
-    public Flux<FavoriteEntity> favorites(String userId) {
-        return mongo.find(Query.query(Criteria.where("userId").is(objectId(userId)))
+    public Flux<FavoriteEntity> favorites(ObjectId userId) {
+        return mongo.find(Query.query(Criteria.where("userId").is(userId))
                 .with(Sort.by(Sort.Direction.DESC, "createdAt", "_id")).limit(50), FavoriteEntity.class);
     }
     public Mono<PurchaseEntity> purchase(PurchaseEntity.CreateDTO input) {
         return findPurchase(input.requestId()).flatMap(existing -> verifyRequest(existing, input))
                 .switchIfEmpty(Mono.defer(() -> {
-                    Query available = Query.query(Criteria.where("_id").is(objectId(input.productId())).and("stock").gte(Integer.parseInt(input.quantity())));
+                    Query available = Query.query(Criteria.where("_id").is(input.productId()).and("stock").gte(Integer.parseInt(input.quantity())));
                     return mongo.findAndModify(available, new Update().inc("stock", -Integer.parseInt(input.quantity())).inc("version", 1),
                                     FindAndModifyOptions.options().returnNew(true), ProductEntity.class)
                             .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.CONFLICT, "Product unavailable or insufficient stock")))
-                            .flatMap(product -> mongo.insert(new PurchaseEntity(new ObjectId(), input.requestId(), objectId(input.userId()), product.id(),
+                            .flatMap(product -> mongo.insert(new PurchaseEntity(new ObjectId(), input.requestId(), input.userId(), product.id(),
                                     Integer.parseInt(input.quantity()), product.price(), Instant.now())))
                             .as(transactions::transactional)
                             .retryWhen(Retry.backoff(3, Duration.ofMillis(25))
@@ -136,7 +134,7 @@ public class CatalogService {
         return false;
     }
     private Mono<PurchaseEntity> verifyRequest(PurchaseEntity existing, PurchaseEntity.CreateDTO input) {
-        if (!existing.userId().equals(objectId(input.userId())) || !existing.productId().equals(objectId(input.productId())) || existing.quantity() != Integer.parseInt(input.quantity()))
+        if (!existing.userId().equals(input.userId()) || !existing.productId().equals(input.productId()) || existing.quantity() != Integer.parseInt(input.quantity()))
             return Mono.error(new ResponseStatusException(HttpStatus.CONFLICT, "requestId belongs to a different purchase"));
         return Mono.just(existing);
     }

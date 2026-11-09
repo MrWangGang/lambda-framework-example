@@ -3,6 +3,7 @@ package org.lambda.example.app.entity;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
 import org.bson.types.ObjectId;
+import org.lambda.framework.common.jackson.JsonObjectId;
 import org.lambda.framework.common.enums.ConverterEnum;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.annotation.Version;
@@ -35,28 +36,28 @@ public record ProductEntity(@Id ObjectId id, String name, String category, Strin
                                  @NotBlank @Pattern(regexp = "[0-9]{1,8}") String stock,
                                  @NotNull Status status) {}
 
-    public static record IdDTO(@NotBlank String id) {}
+    public static record IdDTO(@JsonObjectId @NotNull ObjectId id) {}
 
-    public static record UpdateDTO(@NotBlank String id,
+    public static record UpdateDTO(@JsonObjectId @NotNull ObjectId id,
                                    @NotBlank @Pattern(regexp = "[0-9]{1,18}") String version,
                                    @NotNull @Valid SaveDTO product) {}
 
     public static record CursorDTO(@NotBlank @Size(max = 64) String category,
                                    @Pattern(regexp = "[0-9]{1,3}") String limit,
-                                   Instant beforeTime, String beforeId) {}
+                                   Instant beforeTime, @JsonObjectId ObjectId beforeId) {}
 
     public static record PageDTO(@NotBlank @Size(max = 64) String category,
                                  @Pattern(regexp = "[1-9][0-9]{0,4}") String page,
                                  @Pattern(regexp = "[1-9][0-9]{0,2}") String size) {}
 
-    public static record ViewDTO(String id, String name, String category, String price,
+    public static record ViewDTO(@JsonObjectId ObjectId id, String name, String category, String price,
                                  String stock, String version, Instant createdAt, Status status) {
         public static ViewDTO from(ProductEntity entity) {
-            return new ViewDTO(entity.id().toHexString(), entity.name(), entity.category(), entity.price(),
+            return new ViewDTO(entity.id(), entity.name(), entity.category(), entity.price(),
                     Integer.toString(entity.stock()), Long.toString(entity.version()),
                     Instant.ofEpochMilli(entity.createdAt().toEpochMilli()), entity.status());
         }
     }
 
-    public static record CursorResultDTO(List<ViewDTO> items, Instant nextBeforeTime, String nextBeforeId) {}
+    public static record CursorResultDTO(List<ViewDTO> items, Instant nextBeforeTime, @JsonObjectId ObjectId nextBeforeId) {}
 }
