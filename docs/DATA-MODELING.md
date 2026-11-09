@@ -23,7 +23,7 @@ MongoDB 的集合和文档不需要照搬关系数据库的每一张表。先回
 | 用户 ↔ 收藏商品 | favorites 关系集合 | 双向查询与唯一约束 |
 | 订单 → 有界明细 | 内嵌成交快照 + productId | 保留历史，不随现价改变 |
 
-内嵌和引用取决于访问及增长方式，模型可以随业务迭代。[MongoDB 建模原则](https://www.mongodb.com/docs/manual/data-modeling/best-practices/)
+多对多必须使用中间表或独立关系集合。一对多、多对一直接用内嵌或在多端持有 ObjectId 引用。把关键接口的读写比例、子项上限、独立分页、热点和更新放大写入建模说明。内嵌适合经常一起读取且有界的数据，独立更新频繁或持续增长的数据分集合。查询时再按需求用批量查询或 `$lookup`。[MongoDB 建模原则](https://www.mongodb.com/docs/manual/data-modeling/best-practices/)
 
 ## 2. 当前示例模型
 
@@ -40,9 +40,9 @@ MongoDB 的集合和文档不需要照搬关系数据库的每一张表。先回
 
 设计示意：
 
-~~~json
+~~~javascript
 {
-  "_id":"u1001",
+  "_id":ObjectId("65a000000000000000000001"),
   "nickname":"小王",
   "addresses":[
     {"id":"a1","receiver":"示例收件人","city":"广州","detail":"示例地址","default":true}
@@ -63,7 +63,7 @@ MongoDB 的集合和文档不需要照搬关系数据库的每一张表。先回
 
 ~~~javascript
 db.users.updateOne(
-  { _id: "u1001", version: 1, "addresses.id": "a1" },
+  { _id: ObjectId("65a000000000000000000001"), version: 1, "addresses.id": "a1" },
   { $set: { "addresses.$.city": "深圳" }, $inc: { version: 1 } }
 )
 ~~~
@@ -74,8 +74,8 @@ db.users.updateOne(
 
 ## 4. 一对无限增长的多：作者与文章
 
-~~~json
-{"_id":"post1001","authorId":"u1001","status":"published","title":"示例","createdAt":"时间"}
+~~~javascript
+{_id:ObjectId("65a000000000000000000002"), authorId:ObjectId("65a000000000000000000001"), status:"published", title:"示例", createdAt:ISODate("2026-11-09T08:00:00Z")}
 ~~~
 
 不在 user 文档中保存所有 articleIds。文章索引设计：
@@ -96,8 +96,8 @@ db.articles.createIndex({authorId:1, status:1, createdAt:-1, _id:-1})
 
 ## 5. 多对一：商品与商家
 
-~~~json
-{"_id":"p1001","merchantId":"m1001","name":"示例商品","price":99.00,"status":"active"}
+~~~javascript
+{_id:ObjectId("65a000000000000000000003"), merchantId:ObjectId("65a000000000000000000004"), name:"示例商品", price:"99.00", status:"active"}
 ~~~
 
 商家独立存在 merchants 集合，商品保存 merchantId。商家改联系电话时只更新商家文档。
@@ -115,8 +115,8 @@ db.articles.createIndex({authorId:1, status:1, createdAt:-1, _id:-1})
 
 当前实现：
 
-~~~json
-{"_id":"关系ID","userId":"u1001","productId":"p1001","createdAt":"时间"}
+~~~javascript
+{_id:ObjectId("65a000000000000000000005"), userId:ObjectId("65a000000000000000000001"), productId:ObjectId("65a000000000000000000003"), createdAt:ISODate("2026-11-09T08:00:00Z")}
 ~~~
 
 真实索引：
@@ -129,7 +129,7 @@ db.articles.createIndex({authorId:1, status:1, createdAt:-1, _id:-1})
 
 不推荐把全部 productIds 放进 users，也不把全部 userIds 放进 products。两边都会随增长变成大数组和热点文档，分页与单条更新更难控制。
 
-当前 GET favorites 最多取 50 条，并未实现游标。扩展时添加完整游标和 _id tie-breaker，反向商品时间线也应补齐稳定排序对应的索引。
+当前 `POST /api/favorite/list` 最多取 50 条，并未实现游标。扩展时添加完整游标和 _id tie-breaker，反向商品时间线也应补齐稳定排序对应的索引。
 
 商品被删除后如何处理收藏，应按业务选择隐藏、异步清理或保留失效提示；当前没有自动级联删除。
 
@@ -139,13 +139,13 @@ db.articles.createIndex({authorId:1, status:1, createdAt:-1, _id:-1})
 
 多商品订单可以采用有上限的内嵌明细：
 
-~~~json
+~~~javascript
 {
-  "_id":"order1001",
-  "userId":"u1001",
+  "_id":ObjectId("65a000000000000000000006"),
+  "userId":ObjectId("65a000000000000000000001"),
   "status":"created",
   "items":[
-    {"productId":"p1001","nameSnapshot":"成交商品名","quantity":2,"unitPrice":"99.00"}
+    {"productId":ObjectId("65a000000000000000000003"),"nameSnapshot":"成交商品名","quantity":2,"unitPrice":"99.00"}
   ],
   "totalAmount":"198.00",
   "currency":"CNY",
@@ -183,7 +183,7 @@ db.products.find({category:"book"})
   .explain("executionStats")
 ~~~
 
-观察是否使用预期索引、是否发生大量扫描/内存排序、totalDocsExamined 与返回数量的关系。不要仅凭有 IXSCAN 就认定查询已经足够快。
+观察是否使用预期索引、是否发生大量扫描/内存排序、totalDocsExamined 与返回数量的关系。不要仅凭有 IXSCAN 就认定查询已经足够快。 聚合 Repository 直接绑定 ObjectId，关联两端都保存 BSON ObjectId。[复杂聚合与参数绑定示例](../README.md#aggregation-中的-objectid)
 
 避免：
 
@@ -206,17 +206,18 @@ db.products.find({category:"book"})
 库存：
 ~~~javascript
 db.products.updateOne(
-  { _id: "p1001", stock: { $gte: 2 } },
+  { _id: ObjectId("65a000000000000000000003"), stock: { $gte: 2 } },
   { $inc: { stock: -2, version: 1 } }
 )
 ~~~
 
-这只是单文档语义示意；本示例实际通过 Java findAndModify 与订单事务完成。
+这段展示单文档库存条件更新。本示例通过 Java `findAndModify` 扣减并在事务内创建订单。业务 SKU 还需匹配可售状态，管理端库存调整独立于普通资料编辑。完整规则见 [乐观锁、SKU 库存和金额原子更新](../README.md#乐观锁sku-库存和金额原子更新)。
 
 原则：
 
 - 原子更新用 $inc / $set 等操作符，避免覆盖整文档。
-- 版本条件用于防止旧数据覆盖新数据。
+- 有并发编辑冲突的实体才启用 `@Version`。只追加或靠唯一键、条件原子更新约束的实体按需选用。
+- 余额保持规范字符串，按旧金额和旧版本匹配并原子替换。金额与流水联动时使用事务与唯一操作键。
 - 热门商品库存可能成为写热点，需要业务排队、分桶或预留策略；缓存锁不自动解决所有一致性问题。
 - 单文档原子性足够时不引入跨集合事务。
 - 跨文档事务只包必要数据库操作，短事务比包含外部等待更可控。
