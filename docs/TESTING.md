@@ -1,6 +1,6 @@
 # 验收记录与手工复核操作手册
 
-文档补充：2026-11-09。下面 11 项 JUnit 与 22 项 HTTP 结果是历史实际执行记录，本次文档维护未重新运行这些业务验收。之后的框架通用分页专项检查发现失败，见文末；不能解读为当前所有功能全部通过。
+以下 JUnit 与 HTTP 数字记录历史验收。当前示例通过独立网关访问，业务服务监听内网 RSocket TCP。
 
 日期：2026-11-07。使用已有 JDK 27.0.1.0.3 与 IntelliJ IDEA 内置 Maven 3.9.16；未安装额外 Maven，未发布远程 Maven 构件。
 
@@ -84,7 +84,7 @@ APP_NAME='lambda-manual-20261109-a'
 NACOS_GROUP='LAMBDA_MANUAL'
 ~~~
 
-提前在同 namespace / group 创建 lambda-manual-20261109-a.properties，内容只放测试 greeting。不要覆盖正式默认 Data ID。
+提前在同 namespace / group 创建 lambda-manual-20261109-a.properties，内容只放测试 greeting。按启动手册运行独立网关。网关从同一份环境变量读取 APP_NAME 并将 /api/** 转发到该服务。
 
 记录：
 
@@ -95,28 +95,28 @@ NACOS_GROUP='LAMBDA_MANUAL'
 
 ## 按顺序复核业务
 
-使用 [API 手册](API.md) 的命令。以下表格是操作与判定，不是本次新执行结果。
+使用 [API 手册](API.md) 的网关地址。业务成功看 serviceCode 与 data，参数、库存和版本类错误看 serviceCode 与 serviceMessage。
 
 | 顺序 | 操作 | 通过条件 |
 |---:|---|---|
-| 1 | /info、Nacos 服务列表 | 应用名和端口正确 |
+| 1 | /api/system/info、Nacos 服务列表 | 应用名和 RSocket TCP 注册端口正确 |
 | 2 | 发布不同 greeting 再查询 | 运行中读取新值 |
 | 3 | 同分类创建至少 5 个商品 | 金额、库存、ID 正确 |
 | 4 | page limit=2 连续游标翻页 | 5 条全部出现一次，末页游标空 |
-| 5 | 空分类、limit=0/101、单边游标 | 400 |
-| 6 | 正确 version 更新，再用旧 version 更新 | 前者成功、后者 409 |
+| 5 | 空分类、limit=0/101、单边游标 | 返回参数校验错误 |
+| 6 | 正确 version 更新，再用旧 version 更新 | 前者成功、后者返回版本冲突 |
 | 7 | 同用户重复收藏，再取消两次 | 不重复关系，取消幂等 |
 | 8 | 库存 3 的商品购买 2 | 库存剩 1、订单只一条 |
 | 9 | 重复同 requestId 同参数 | 库存不再减少 |
-| 10 | 同 requestId 改 quantity | 409 |
-| 11 | 库存不足购买 | 409，无新订单，无负库存 |
+| 10 | 同 requestId 改 quantity | 返回请求号冲突 |
+| 11 | 库存不足购买 | 返回库存不足，无新订单，无负库存 |
 | 12 | 两个并发请求争抢最后库存 | 不超卖，失败请求不留订单 |
-| 13 | Redis set/get/delete 与短 TTL | 值一致、删除数量正确、到期 404 |
+| 13 | Redis set/get/delete 与短 TTL | 值一致、删除数量正确、到期后返回缓存不存在 |
 | 14 | 延迟消息 2000ms | 发布确认后到期出现唯一回执 |
 | 15 | 重复相同 messageId（专门工具投递） | 回执不被重复覆盖 |
 | 16 | 无效消息投到专用队列 | 死信增加，消费者仍工作 |
 | 17 | 合法向量写入与 query | 命中该 UUID |
-| 18 | 非法 UUID、2 维、全零、非法 limit | 400 |
+| 18 | 非法 UUID、2 维、全零、非法 limit | 返回参数校验错误 |
 
 并发库存验证是正确性测试，不是压测。消息重复投递需要复用同一消息 ID；重复调用现有 HTTP POST 会生成新 ID，不能用来证明消费幂等。
 

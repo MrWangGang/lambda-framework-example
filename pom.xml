@@ -13,5 +13,6 @@
     <packaging>pom</packaging>
     <modules>
         <module>lambda-example-app</module>
+        <module>lambda-example-gateway</module>
     </modules>
 </project>

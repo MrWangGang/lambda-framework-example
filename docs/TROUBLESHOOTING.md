@@ -9,7 +9,7 @@
 | 编译前 | Maven / parent POM 错误 | JDK、同级目录、框架 install |
 | 启动配置 | Nacos import 错误 | Data ID、namespace、账号、8848/9848 |
 | 初始化资源 | ApplicationRunner 失败 | Mongo 索引、Rabbit 插件、Qdrant 集合 |
-| HTTP 业务 | 400/404/409/5xx | 请求参数、版本、库存、日志 |
+| 网关业务错误 | serviceCode / serviceMessage | 请求参数、版本、库存、业务服务日志 |
 | 后台消费 | 队列堆积、无回执 | 消费者数、Mongo 可写、死信 |
 | 停止阶段 | Nacos 断连回调 | 区分退出清理日志与运行中故障 |
 
@@ -126,11 +126,12 @@ HTTP key 会增加 EXAMPLE_RESOURCE_PREFIX:cache: 前缀。检查数据库编号
 | 找不到分页路由 | 使用 POST /api/product/page 或 POST /api/product/cursor |
 | 收藏列表只有 50 条 | 当前固定上限，无游标 |
 | 同 requestId 返回旧订单 | 参数相同的幂等结果 |
-| 同 requestId 返回 409 | 参数被改动 |
+| 同 requestId 返回业务冲突 | 参数被改动 |
 | 商品更新后向量没变 | 当前没有自动同步 |
 | 缓存删了商品还存在 | 缓存演示与商品业务独立 |
-| 查询回执立即 404 | 延迟未到或消费尚未完成 |
-| 默认 8081 连不上 | 应用没启动、绑定本机、端口改动或防火墙 |
+| 查询回执返回未收到 | 延迟未到或消费尚未完成 |
+| 默认 8081 连不上 | 检查网关进程、监听地址、端口和防火墙 |
+| 网关连不上后端 | 检查 Nacos 服务名、注册 IP 和 RSocket TCP 端口 |
 
 ## 9. 诊断资料模板
 

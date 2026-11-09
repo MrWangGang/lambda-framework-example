@@ -13,7 +13,7 @@
 - messaging：消息拓扑、发送和消费。
 - vector：Qdrant 适配。
 - config：连接与事务配置。
-- web：HTTP 入参和路由。
+- controller：用以 `/` 开头的 RSocket `@MessageMapping` 承接网关转发。
 
 新增业务建议保持控制器负责参数边界，服务负责业务规则，数据库适配负责持久化；不把用户名密码放进 Java 类或新建静态全局客户端。
 
@@ -54,7 +54,7 @@ POST /api/product/page 使用 ProductEntity.PageDTO，ProductRepository 通过 s
 
 框架的连接缓存、实例 key、发现异常恢复、端口注册等存在待验证/待修问题。[完整分析](https://github.com/MrWangGang/lambda-framework/blob/main/docs/RSOCKET-AND-VIRTUAL-THREADS.md)
 
-不要把当前示例单应用 HTTP 验收写成跨服务 RPC 已验证。后续至少需要两个进程和多实例重启/替换场景。
+分别验证 HTTP 经网关转发和原生 Fory Facade 调用。服务多实例发布需覆盖实例重启与替换。
 
 ## 5. 虚拟线程：保留 Reactor
 

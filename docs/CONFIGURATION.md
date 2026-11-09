@@ -2,7 +2,7 @@
 
 [返回总览](../README.md) · [首次启动](QUICKSTART.md) · [运维](OPERATIONS.md)
 
-配置源为 `lambda-example-app/src/main/resources/application.properties`；启动脚本读取根目录 .env。以下默认值是源码默认，不代表可以省略服务准备。
+业务服务与网关分别加载各自的 `application.properties`。两个启动脚本读取根目录 `.env`。以下默认值是源码默认，不代表可以省略服务准备。
 
 ## 1. 脚本环境变量
 
@@ -14,8 +14,11 @@
 | SERVICE_USER | root | Mongo / Redis / Rabbit 默认用户名 |
 | SERVICE_PASSWORD | run.sh 必填 | 多项服务默认密码，Qdrant 默认 API Key 来源 |
 | APP_NAME | lambda-example-app | 应用名、Nacos 服务名和 Data ID 前缀 |
-| APP_BIND_ADDRESS | 127.0.0.1 | HTTP 监听地址 |
-| APP_PORT | 8081 | HTTP 端口 |
+| APP_BIND_ADDRESS | 127.0.0.1 | 业务 RSocket TCP 监听地址 |
+| APP_RSOCKET_PORT | 7000 | 业务 TCP 端口 |
+| GATEWAY_NAME | lambda-example-gateway | 网关名与 Nacos Data ID 前缀 |
+| GATEWAY_BIND_ADDRESS | 127.0.0.1 | 网关 HTTP 监听地址 |
+| APP_PORT | 8081 | 网关 HTTP 端口 |
 | APP_REGISTER_IP | 127.0.0.1 | Nacos 对外公布的应用 IP |
 | MONGO_DATABASE | lambda_example | Mongo 业务数据库 |
 | MONGODB_REPLICA_SET | rs0 | 副本集名称 |
@@ -33,9 +36,12 @@
 
 | 属性 | 当前来源 / 行为 |
 |---|---|
-| spring.application.name | APP_NAME |
-| server.address / server.port | APP_BIND_ADDRESS / APP_PORT |
-| spring.config.import | nacos:应用名.properties，必需导入，refreshEnabled=true |
+| spring.application.name | 业务服务用 APP_NAME，网关用 GATEWAY_NAME |
+| spring.main.web-application-type | 业务服务 none，网关 reactive |
+| spring.rsocket.server.address / port | APP_BIND_ADDRESS / APP_RSOCKET_PORT |
+| server.address / server.port | 网关使用 GATEWAY_BIND_ADDRESS / APP_PORT |
+| spring.config.import | 业务服务必需导入，网关可选导入，Data ID 为各自应用名.properties |
+| spring.cloud.gateway.server.webflux.routes | 默认将 /api/** 转发到 rb://APP_NAME |
 | spring.cloud.nacos.config.server-addr | NACOS_SERVER_ADDR |
 | spring.cloud.nacos.discovery.server-addr | NACOS_SERVER_ADDR |
 | spring.cloud.nacos.config.namespace | NACOS_NAMESPACE |

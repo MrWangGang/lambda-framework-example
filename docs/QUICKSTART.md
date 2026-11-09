@@ -60,6 +60,7 @@ EXAMPLE_RESOURCE_PREFIX='lambda_example'
 APP_NAME='lambda-example-app'
 APP_BIND_ADDRESS='127.0.0.1'
 APP_REGISTER_IP='127.0.0.1'
+APP_RSOCKET_PORT='7000'
 APP_PORT='8081'
 ~~~
 
@@ -131,7 +132,13 @@ example.greeting=Hello from Nacos
 
 启动会创建 Mongo 索引、Rabbit 交换机/队列与 Qdrant 集合，并开始消费消息。这些步骤各有等待上限，基础设施不可用会导致启动失败或异常。
 
-另开终端：
+保持业务服务运行，在第二个终端启动网关。两个进程使用同一份 `.env` 和 Nacos namespace/group。
+
+~~~bash
+./scripts/run-gateway.sh
+~~~
+
+然后通过网关调用。
 
 ~~~bash
 curl -i -X POST http://127.0.0.1:8081/api/system/info -H 'Content-Type: application/json' -d '{}'
@@ -141,13 +148,17 @@ curl -i -X POST http://127.0.0.1:8081/api/system/info -H 'Content-Type: applicat
 
 ~~~json
 {
-  "application":"lambda-example-app",
-  "greeting":"Hello from Nacos",
-  "replicaSet":"rs0"
+  "serviceCode": "E00000000",
+  "serviceMessage": "操作成功",
+  "data": {
+    "application": "lambda-example-app",
+    "greeting": "Hello from Nacos",
+    "replicaSet": "rs0"
+  }
 }
 ~~~
 
-这里只能证明 HTTP 与配置读取正常。下一步按 API 创建商品，并验证 Redis、消息和向量接口。
+这条请求验证网关 HTTP、Nacos 服务发现和 RSocket 转发。下一步按 API 创建商品，并验证 Redis、消息和向量接口。
 
 ## 7. 动态刷新验证
 
@@ -162,7 +173,7 @@ curl -i -X POST http://127.0.0.1:8081/api/system/info -H 'Content-Type: applicat
 
 - 导入根 pom.xml。
 - 设置 Project SDK、Maven Runner、Importer 使用 JDK 27。
-- 主类为 `org.lambda.example.app.Application`。
+- 业务服务主类是 `org.lambda.example.app.Application`，网关主类是 `org.lambda.example.gateway.GatewayApplication`。分别创建运行配置。
 - Run Configuration 填写对应环境变量。
 - 不把 .env 原样贴入 Program arguments；IDEA 默认不会自动 source 它。
 - VM options 可以按脚本设置 `--enable-native-access=ALL-UNNAMED`。
@@ -171,21 +182,13 @@ curl -i -X POST http://127.0.0.1:8081/api/system/info -H 'Content-Type: applicat
 
 ## 9. 对外访问与 Nacos 注册
 
-默认仅本机访问。需要其他机器访问时：
+网关与业务服务同机部署时，保留业务服务的 `APP_BIND_ADDRESS=127.0.0.1` 和 `APP_REGISTER_IP=127.0.0.1`。分开部署时，这两个值设为业务服务的内网地址，并限制 TCP 7000 只允许网关或获准的服务访问。Nacos 注册的端口为实际 RSocket TCP 端口。
 
-~~~bash
-APP_BIND_ADDRESS='0.0.0.0'
-APP_REGISTER_IP='调用方可到达的应用主机IP'
-APP_PORT='8081'
-~~~
-
-server.address 决定绑定地址；注册 IP 告诉其他客户端去哪里连接。不要注册 0.0.0.0，也不要在远程部署时让调用方误连自己的 127.0.0.1。
-
-示例没有业务认证，开放 HTTP 前先明确访问范围。应用端口 8081 和 Nacos 控制台 8080 是两个不同服务。
+对外业务入口使用网关的 `GATEWAY_BIND_ADDRESS` 和 `APP_PORT`。网关默认只监听本机。示例网关未接入业务认证，对外部署时需在网关配置身份校验。
 
 ## 10. 停止与清理
 
-前台运行用 Ctrl+C，等待关闭完成。确认 Nacos 实例注销、MQ 消费停止以及进程退出。
+在业务服务和网关各自的终端按 Ctrl+C，等待两个进程退出。确认 Nacos 实例注销、MQ 消费停止以及进程退出。
 
 停止不会删除 Mongo 文档、Redis 键、Rabbit 消息或 Qdrant 向量。验收完成按 [TESTING](TESTING.md) 清理专用资源；不要删除共享数据卷。
 
