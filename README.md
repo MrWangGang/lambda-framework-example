@@ -66,7 +66,7 @@ curl -fsS -X POST http://127.0.0.1:8081/api/vector/search \
   -d '{"vector":["1","0","0"],"limit":"5"}'
 ~~~
 
-创建返回的 id、version 和游标以实际值为准。金额以字符串保存，库存和数量字符串在原子更新处转换。状态值为 active 或 inactive。旧版 REST 路由、String 主键和 Decimal128 金额需要迁移。
+创建返回的 id、version 和游标以实际值为准。金额以字符串保存，库存和数量字符串在原子更新处转换。状态值为 active 或 inactive。
 
 ## 源码布局与框架使用
 
@@ -85,24 +85,14 @@ curl -fsS -X POST http://127.0.0.1:8081/api/vector/search \
 
 | Maven 模块 | 职责 |
 |---|---|
-| `lambda-example-app` | 服务 A，接收网关请求、运行中间件示例、调用聊天 Facade |
-| `lambda-example-service-b` | 服务 B，实现聊天回执逻辑 |
-| `lambda-example-service-b-facade` | B 的共享 Java RPC 契约，供 A 依赖 |
-| `lambda-example-gateway` | 前端 HTTP 与 WSS 的统一入口 |
+| `lambda-example-app` | 服务 A，处理公开业务接口并调用服务 B |
+| `lambda-example-service-b` | 服务 B，提供 Fory 双向 RPC |
+| `lambda-example-service-b-facade` | B 的共享 Java 接口和 record |
+| `lambda-example-gateway` | 前端 HTTP 和 WebSocket 入口 |
 
-服务 A 的 Controller 将输入流传给服务 B 的 Facade。
+### 1. 服务 B 提供 RPC
 
-~~~java
-@RSocketRpc
-private ChatFacade chat;
-
-@MessageMapping("/api/chat/exchange")
-public BiFlux<ChatFacade.Receipt> exchange(Flux<ChatFacade.Message> messages) {
-    return chat.exchange(messages);
-}
-~~~
-
-服务 B 在 Facade 模块声明 RPC 路由和业务 record。
+[ChatFacade](lambda-example-service-b-facade/src/main/java/com/lambda/example/serviceb/facade/ChatFacade.java) 是共享契约。点分隔路由首段 `lambda-example-service-b` 与 B 在 Nacos 注册的服务名一致。
 
 ~~~java
 public interface ChatFacade {
@@ -114,19 +104,81 @@ public interface ChatFacade {
 }
 ~~~
 
-网关从 `/ws/chat` 转发到 A 的 `/api/chat/exchange`。部署时把路由发布到网关项目名对应的 Nacos Data ID，默认是 `lambda-example-gateway.properties`。
+[B 的 Maven 模块](lambda-example-service-b/pom.xml) 依赖 Facade JAR、`lambda-framework-rsocket` 和 `lambda-framework-nacos`。[ServiceBApplication](lambda-example-service-b/src/main/java/com/lambda/example/serviceb/ServiceBApplication.java) 导入 `RSocketStrategiesConfig`、`RSocketAcceptorInterceptor`、`RsocketGlobalExceptionHandler`、`RsocketInterceptorConfig` 和 `RsocketRunListener`。后者在启动时把 TCP 端口登记到 Nacos。
 
-~~~properties
-spring.cloud.gateway.server.webflux.routes[1].id=chat-websocket
-spring.cloud.gateway.server.webflux.routes[1].uri=ws://lambda-example-app
-spring.cloud.gateway.server.webflux.routes[1].predicates[0]=Path=/ws/chat
-spring.cloud.gateway.server.webflux.routes[1].filters[0]=SetPath=/api/chat/exchange
+[ChatFacadeImpl](lambda-example-service-b/src/main/java/com/lambda/example/serviceb/facade/ChatFacadeImpl.java) 由 Spring 扫描并注册。方法沿用接口上的映射。
+
+~~~java
+@Controller
+public class ChatFacadeImpl implements ChatFacade {
+    private final ChatServiceImpl chat;
+
+    public ChatFacadeImpl(ChatServiceImpl chat) {
+        this.chat = chat;
+    }
+
+    @Override
+    public BiFlux<Receipt> exchange(Flux<Message> messages) {
+        return BiFlux.of(messages.map(chat::receive));
+    }
+}
 ~~~
 
-小程序使用已配置的 WSS 合法域名。本机 WebSocket 客户端可连接 `ws://127.0.0.1:8081/ws/chat`。
+B 使用以下配置。与 A、网关共用 `NACOS_SERVER_ADDR`、`NACOS_NAMESPACE`、`NACOS_GROUP` 以及示例的 Nacos 凭据。跨机器部署时，`SERVICE_B_REGISTER_IP` 填写 A 可访问的内网地址。
+
+~~~properties
+spring.application.name=lambda-example-service-b
+spring.main.web-application-type=none
+spring.rsocket.server.transport=tcp
+spring.rsocket.server.address=${SERVICE_B_BIND_ADDRESS:127.0.0.1}
+spring.rsocket.server.port=${SERVICE_B_RSOCKET_PORT:7001}
+spring.cloud.nacos.discovery.ip=${SERVICE_B_REGISTER_IP:127.0.0.1}
+~~~
+
+本地示例使用这些默认值即可。集中管理时在 Nacos 发布 `lambda-example-service-b.properties`。B 的全部引导参数见 [application.properties](lambda-example-service-b/src/main/resources/application.properties)。
+
+### 2. 服务 A 调用服务 B
+
+[A 的 Maven 模块](lambda-example-app/pom.xml) 引入 B 的 Facade JAR 和 `lambda-framework-rpc`。[Application](lambda-example-app/src/main/java/org/lambda/example/app/Application.java) 导入 `RSocketStrategiesConfig`、`RSocketLoadbalance` 和 `RsocketRpcProxyBeanFactoryPostProcessor`，并通过 `PrincipalStash` 从 Reactor Context 读取入站身份。
+
+A 的 [ChatController](lambda-example-app/src/main/java/org/lambda/example/app/controller/ChatController.java) 把收到的流直接交给 B。Java 业务 Bean 内也可以用同样方式注入并调用 B 的 Facade。
+
+~~~java
+@RSocketRpc
+private ChatFacade chat;
+
+@MessageMapping("/api/chat/exchange")
+public BiFlux<ChatFacade.Receipt> exchange(Flux<ChatFacade.Message> messages) {
+    return chat.exchange(messages);
+}
+~~~
+
+`/api/chat/exchange` 是 A 给网关的公开路径。`lambda-example-service-b.chatFacade.exchange` 是 B 给 Java 调用方的原生 RPC 路由。A 通过 Nacos 发现 B，使用 Fory 发送和接收 record。网关只路由到 A，Java Facade 依赖留在 A、B。
+
+### 3. 网关每个服务前缀配置一次
+
+下面是示例的实际路由。集中配置时发布到 `lambda-example-gateway.properties`。部署多个业务服务时，分别划分 `/api/order/**`、`/api/user/**` 等前缀。
+
+~~~properties
+spring.cloud.gateway.server.webflux.routes[0].id=example
+spring.cloud.gateway.server.webflux.routes[0].uri=rb://lambda-example-app
+spring.cloud.gateway.server.webflux.routes[0].predicates[0]=Path=/api/**
+spring.cloud.gateway.server.webflux.routes[1].id=chat-websocket
+spring.cloud.gateway.server.webflux.routes[1].uri=ws://lambda-example-app
+spring.cloud.gateway.server.webflux.routes[1].predicates[0]=Path=/ws/api/chat/**
+spring.cloud.gateway.server.webflux.routes[1].filters[0]=StripPrefix=1
+~~~
+
+- HTTP 的 `POST /api/product/find`、`POST /api/product/page` 共用第一条路由。A 新增 `@MessageMapping("/api/product/search")` 后，该请求仍走同一条。
+- WSS 的 `/ws/api/chat/exchange` 匹配第二条路由。网关移除 `/ws`，后端收到 `/api/chat/exchange`。如果 A 新增 `/api/chat/room` 双向接口，同一条 WSS 路由也覆盖 `/ws/api/chat/room`。
+- 网关根据服务端已发布的签名选取响应方式。新增接口随契约缓存刷新生效，未知路径返回 404。A 到 B 的 Fory 调用由 Facade 和 Nacos 决定。
+
+### 4. 小程序打开双向连接
+
+小程序使用已配置的 WSS 合法域名。本机 WebSocket 客户端可连接 `ws://127.0.0.1:8081/ws/api/chat/exchange`。
 
 ~~~javascript
-const socket = uni.connectSocket({ url: 'wss://api.example.com/ws/chat' })
+const socket = uni.connectSocket({ url: 'wss://api.example.com/ws/api/chat/exchange' })
 
 function sendMessage(messageId, text) {
   socket.send({ data: JSON.stringify({ messageId, text }) })
@@ -324,7 +376,7 @@ Flux<FavoriteRepository.MerchantStats> stats(ObjectId userId, ObjectId reviewerI
 
 统一使用强类型 Repository 签名。聚合根集合匹配、`$expr`、`$in` 和 `$lookup.let` 都绑定原生 ObjectId。Spring Data 的主键映射可能转换合法的 String。普通关联字段和跨集合条件一律显式保持 BSON 类型一致。
 
-历史数据优先迁移为统一 BSON 类型。兼容期确需处理旧字符串时，`$toObjectId` 遇到非法值会使聚合失败，`$convert` 可定义 `onError` 和 `onNull`。不要在热查询中逐行转换索引字段。优先对参数完成转换，再直接匹配索引字段。上线前用代表性数据的 `explain("executionStats")` 核对根集合与各 `$lookup` 的执行计划。[Spring Data 聚合方法](https://docs.spring.io/spring-data/mongodb/reference/mongodb/repositories/query-methods.html#mongodb.repositories.queries.aggregation) · [MongoDB 类型转换](https://www.mongodb.com/docs/manual/reference/operator/aggregation/convert/)
+历史字符串 ID 在数据迁移时统一转为 BSON ObjectId。迁移脚本可用 `$convert` 的 `onError` 和 `onNull` 显式处理异常值。不要在热查询中逐行转换索引字段。优先对参数完成转换，再直接匹配索引字段。上线前用代表性数据的 `explain("executionStats")` 核对根集合与各 `$lookup` 的执行计划。[Spring Data 聚合方法](https://docs.spring.io/spring-data/mongodb/reference/mongodb/repositories/query-methods.html#mongodb.repositories.queries.aggregation) · [MongoDB 类型转换](https://www.mongodb.com/docs/manual/reference/operator/aggregation/convert/)
 
 ### 乐观锁、SKU 库存和金额原子更新
 
@@ -413,7 +465,7 @@ Java RPC 的 Facade 方法写完整的 `@MessageMapping`，例如 `order.orderFa
 | `Flux<I>` 等普通响应式入参，返回 `BiFlux<O>` | `request/channel` | 双向 NDJSON，客户端可发 JSON 数组或 NDJSON 行，响应逐行返回。 |
 | 普通单条入参，返回 `BiFlux<O>` | `request/stream` | 处理一条输入，响应逐行返回 NDJSON。 |
 
-HTTP 业务请求经网关的 `rb://` 路由发送 POST。WebSocket 经网关的 `ws://` 路由访问输入为 `Flux<I>`、返回为 `BiFlux<O>` 的接口。两种入口都核对服务端通过 `@MessageMapping` 发布的固定斜杠路径。网关使用重写后的路径查契约。未公开路径返回 404，契约暂不可用返回 503。业务方法声明映射和签名即可。
+HTTP 业务请求经网关的 `rb://` 路由发送 POST。WebSocket 经网关的 `ws://` 路由访问输入为 `Flux<I>`、返回为 `BiFlux<O>` 的接口。两种入口都核对服务端通过 `@MessageMapping` 发布的固定斜杠路径。按服务划分网关路径前缀。新增方法落在已有前缀内时，业务方法声明映射和签名即可。网关使用重写后的路径查契约。未公开路径返回 404，契约暂不可用返回 503。
 
 ~~~java
 @MessageMapping("/api/order/summary")
@@ -443,20 +495,20 @@ public BiFlux<Check> exchange(Flux<Item> items) {
 
 ### WSS 路由与服务间双向 RPC
 
-客户端连接 `wss://<网关域名>/ws/chat`。在网关的 Nacos 配置内加入下列路由，业务服务仍使用 RSocket TCP。TLS 由网关或其前置入口终止。前置代理应转发 WebSocket Upgrade，认证与授权在网关握手时生效。
+客户端连接 `wss://<网关域名>/ws/api/order/exchange`。在网关的 Nacos 配置内按服务加一条路由，`StripPrefix=1` 去掉 `/ws`。业务服务仍使用 RSocket TCP，并通过 `@MessageMapping("/api/order/exchange")` 公开处理方法。TLS 由网关或其前置入口终止。前置代理应转发 WebSocket Upgrade，认证与授权在网关握手时生效。
 
 ~~~properties
-spring.cloud.gateway.server.webflux.routes[1].id=chat-websocket
-spring.cloud.gateway.server.webflux.routes[1].uri=ws://chat-service
-spring.cloud.gateway.server.webflux.routes[1].predicates[0]=Path=/ws/chat
-spring.cloud.gateway.server.webflux.routes[1].filters[0]=SetPath=/api/order/exchange
+spring.cloud.gateway.server.webflux.routes[1].id=order-websocket
+spring.cloud.gateway.server.webflux.routes[1].uri=ws://order
+spring.cloud.gateway.server.webflux.routes[1].predicates[0]=Path=/ws/api/order/**
+spring.cloud.gateway.server.webflux.routes[1].filters[0]=StripPrefix=1
 ~~~
 
 每条 WebSocket 文本消息包含一个 JSON 请求值。每个响应元素独立发送一条 JSON 文本消息，例如 `{"serviceCode":"E00000000","serviceMessage":"操作成功","data":[{"sku":"A1"}]}`。业务失败发送错误外壳，`data` 为 `[]`，随后关闭连接。客户端可在同一个连接上先收到回复再发送下一条请求。
 
 服务 A 可以将入站 `Flux<I>` 传给服务 B 的 Facade，由服务 B 的 `BiFlux<O>` 直接返回给 A。B 的 Facade 使用点分隔的 `@MessageMapping`，A 用 `@RSocketRpc` 注入。前端到网关是 WebSocket JSON，网关到 A 是 RSocket JSON，A 到 B 是 RSocket Fory。业务逻辑保留响应式链路，取消随订阅传递。
 
-Java 服务间原生 RPC 固定使用 Apache Fory。两端导入 `RSocketStrategiesConfig` 后，框架从已声明的请求、响应类型中自动收集 record、嵌套泛型、枚举和框架分页类型。保持 Facade 契约同版。旧项目中的多态实际类型或非 record DTO 可用 `ForyRpcTypes` 扩展白名单。服务端拒绝用 JSON 或二进制连接调用点分隔的原生 RPC 路由。网关 JSON 业务路由使用 `/` 前缀。身份元数据沿用 JSON。
+Java 服务间原生 RPC 固定使用 Apache Fory。两端导入 `RSocketStrategiesConfig` 后，框架从已声明的请求、响应类型中自动收集 record、嵌套泛型、枚举和框架分页类型。保持 Facade 契约同版。签名之外的多态子类型用 `ForyRpcTypes` 显式注册。服务端拒绝用 JSON 或二进制连接调用点分隔的原生 RPC 路由。网关 JSON 业务路由使用 `/` 前缀。身份元数据沿用 JSON。
 
 网关默认每个后端实例复用一条 RSocket TCP 连接。需要承受单条连接断开的关键路由可在 Nacos 配置 `rsocketConnectionsPerInstance=2`。连接关闭后按最近一次成功发现的目标列表补建连接。请求已发出时由调用方根据业务幂等规则决定如何处理，网关不自动重放。
 
