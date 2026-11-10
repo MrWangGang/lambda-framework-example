@@ -27,4 +27,4 @@ curl -fsS -X POST "$base/message/sendDelayed" -H 'Content-Type: application/json
   -d '{"content":"hello","delayMillis":"2000"}'
 ~~~
 
-查询示例中的 id 使用本次实际创建的商品 ID。网关的业务响应使用 JSON 外壳。成功时 `serviceCode` 为 `E00000000`，缓存查询的 `data` 是 JSON 字符串。输入校验、资源不存在和库存冲突等后端错误通过 `serviceCode` 和 `serviceMessage` 返回，业务客户端按这两个字段判断。收藏列表逐条返回 NDJSON，部分删除接口返回空数据。需要验收数据时使用独立测试库和资源前缀，验收后清理。
+查询示例中的 id 使用本次实际创建的商品 ID。网关的业务响应使用 JSON 外壳。成功时 `serviceCode` 为 `E00000000`，缓存查询的 `data` 是 JSON 字符串。输入校验、资源不存在和库存冲突等后端错误通过 `serviceCode` 和 `serviceMessage` 返回，业务客户端按这两个字段判断。收藏列表由普通 Flux 聚合成 `data` 数组，空列表返回 `data: []`。部分删除接口返回空数据。需要验收数据时使用独立测试库和资源前缀，验收后清理。
