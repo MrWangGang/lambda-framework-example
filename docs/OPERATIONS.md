@@ -1,6 +1,6 @@
 # Docker 部署、端口、账号与运维手册
 
-[返回总览](../README.md) · [配置](CONFIGURATION.md) · [测试清理](TESTING.md) · [排错](TROUBLESHOOTING.md)
+[返回总览](../README.md) · [配置](CONFIGURATION.md) · [排错](TROUBLESHOOTING.md)
 
 ## 1. 部署基线与资料位置
 
@@ -226,6 +226,6 @@ Mongo 从单机转 rs0 前的历史备份：
 
 ## 12. 数据清理
 
-测试按独立数据库和前缀隔离，按 [TESTING](TESTING.md) 列清资源并删除。不要删除正式默认配置、共享账号、全部数据库或全部 Docker 卷。
+测试按独立数据库和前缀隔离，按本次创建的资源名清理。不要删除正式默认配置、共享账号、全部数据库或全部 Docker 卷。
 
 产品审计日志和 Nacos 配置历史按自身保留策略处理，业务测试数据清理不等于删除审计记录。

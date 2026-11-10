@@ -6,47 +6,19 @@
 
 ## 1. 新业务放在哪里
 
-当前按业务分包：
+Service A 的 `app` 模块分为 `controller`、`service`、`repository`、`entity` 和 `facade` 实现。RPC 接口与 record 位于独立的 `service-a/facade` 模块。Service B 依赖这个 Facade JAR。
 
-- catalog：商品、收藏、购买。
-- cache：缓存演示。
-- messaging：消息拓扑、发送和消费。
-- vector：Qdrant 适配。
-- config：连接与事务配置。
-- controller：用以 `/` 开头的 RSocket `@MessageMapping` 承接网关转发。
+新增业务用 Controller 管参数边界，Service 处理业务规则，Repository 负责 Mongo 查询或 Qdrant 集合访问。返回 Mono 或 Flux，把持久化操作串联返回。
 
-新增业务建议保持控制器负责参数边界，服务负责业务规则，数据库适配负责持久化；不把用户名密码放进 Java 类或新建静态全局客户端。
+## 2. 用户体系
 
-返回 Mono / Flux，把数据库操作串联返回。请求链内不主动 subscribe，不通过 block 改为同步接口。
+业务登录核验成功后调用 `PrincipalFactory.setPrincipal`。网关通过 Redis 校验令牌，框架透传当前身份。注入 `PrincipalFactory`，调用 `currentUserId()` 获取 ID，或调用 `currentUser(LoginUser.class)` 读取快照。按会话和资源归属授权。
 
-## 2. 用户体系：复用已有超类
-
-框架已经有：
-
-- SecurityLoginUser<ID>：登录用户对象接口。
-- UnifyPO<ID>：实体公共字段。
-- PrincipalFactory：会话与用户快照抽象父类。
-- SecurityPrincipalHolder：当前请求身份读取。
-- SecurityAuthManager / SecurityAutzManager：认证与授权扩展。
-
-完整说明见[框架用户体系手册](https://github.com/MrWangGang/lambda-framework/blob/main/docs/USER-AND-SECURITY.md)。
-
-实施顺序：
-
-1. 修正 Security 专用 Redis 的 ACL username 接入。
-2. 定义 User 和 LoginUser 快照，明确 ID 格式、禁用/注销状态。
-3. 实现真实凭据校验，再调用 setPrincipal。
-4. 覆盖默认 verify=true 的认证/授权实现。
-5. 配置过滤器与上下文并验证顺序。
-6. 从可信上下文取得 userId，替换当前请求自由传入的 userId。
-7. 处理多设备、租户、令牌有效期、改密、角色更新。
-8. 完成端到端与拒绝场景测试。
-
-不要仅增加用户类就宣称登录已经接通。当前未实现 /login、/logout、/register 等端点。
+[框架用户体系手册](https://github.com/MrWangGang/lambda-framework/blob/main/docs/USER-AND-SECURITY.md)
 
 ## 3. 框架页码分页
 
-POST /api/product/page 使用 ProductEntity.PageDTO，ProductRepository 通过 sqlPaging 组合 Mongo count、查询和稳定排序。返回 Paged<ProductEntity.ViewDTO>。大列表采用 /api/product/cursor。
+POST /api/product/page 使用 ProductEntity.PageDTO，ProductRepository 通过 queryPage 组合 Mongo count、查询和稳定排序。返回 Paged<ProductEntity.ViewDTO>。大列表采用 /api/product/cursor。
 
 ## 4. RSocket：独立服务的接入
 

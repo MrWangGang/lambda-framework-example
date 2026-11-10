@@ -11,5 +11,5 @@ fi
 : "${SERVICE_HOST:?Set SERVICE_HOST}"
 : "${SERVICE_PASSWORD:?Set SERVICE_PASSWORD}"
 export JAVA_HOME SERVICE_HOST SERVICE_PASSWORD
-./scripts/mvn.sh -B -pl lambda-example-gateway -am package
-exec "$JAVA_HOME/bin/java" --enable-native-access=ALL-UNNAMED -jar lambda-example-gateway/target/lambda-example-gateway-1.0.0-SNAPSHOT.jar "$@"
+./scripts/mvn.sh -B -pl gateway -am package
+exec "$JAVA_HOME/bin/java" --enable-native-access=ALL-UNNAMED -jar gateway/target/lambda-example-gateway-1.0.0-SNAPSHOT.jar "$@"

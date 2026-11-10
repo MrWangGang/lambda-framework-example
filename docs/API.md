@@ -1,6 +1,6 @@
 # 示例 API
 
-[完整接口清单和请求示例](../README.md#api)。所有业务请求发到网关，使用 POST 与 JSON 请求体，ID 放请求 record 字段。
+[完整入口与请求示例](../README.md#普通请求)。所有业务请求发到网关，使用 POST 与 JSON 请求体，ID 放请求 record 字段。
 
 | 输入 | 约定 |
 |---|---|
@@ -15,16 +15,18 @@
 | vector | 三个有限数值字符串，向量至少一维非零 |
 | 向量 id | UUID |
 
+先登录获取 `data.token`。在终端中设置 `TOKEN` 后执行以下调用。会话信息、快照与注销分别使用 `/session/whoami`、`/session/profile` 和 `/session/logout`，请求体为 `{}`。
+
 ~~~bash
 base=http://127.0.0.1:8081/api
-curl -fsS -X POST "$base/product/find" -H 'Content-Type: application/json' \
+curl -fsS -X POST "$base/product/find" -H "Authorization: Bearer ${TOKEN}" -H 'Content-Type: application/json' \
   -d '{"id":"507f1f77bcf86cd799439011"}'
-curl -fsS -X POST "$base/product/cursor" -H 'Content-Type: application/json' \
+curl -fsS -X POST "$base/product/cursor" -H "Authorization: Bearer ${TOKEN}" -H 'Content-Type: application/json' \
   -d '{"category":"book","limit":"20"}'
-curl -fsS -X POST "$base/cache/put" -H 'Content-Type: application/json' \
+curl -fsS -X POST "$base/cache/put" -H "Authorization: Bearer ${TOKEN}" -H 'Content-Type: application/json' \
   -d '{"key":"smoke","value":"ready","ttlSeconds":"60"}'
-curl -fsS -X POST "$base/message/sendDelayed" -H 'Content-Type: application/json' \
+curl -fsS -X POST "$base/message/sendDelayed" -H "Authorization: Bearer ${TOKEN}" -H 'Content-Type: application/json' \
   -d '{"content":"hello","delayMillis":"2000"}'
 ~~~
 
-查询示例中的 id 使用本次实际创建的商品 ID。网关的业务响应使用 JSON 外壳。成功时 `serviceCode` 为 `E00000000`，缓存查询的 `data` 是 JSON 字符串。输入校验、资源不存在和库存冲突等后端错误通过 `serviceCode` 和 `serviceMessage` 返回，业务客户端按这两个字段判断。收藏列表由普通 Flux 聚合成 `data` 数组，空列表返回 `data: []`。部分删除接口返回空数据。需要验收数据时使用独立测试库和资源前缀，验收后清理。
+查询示例中的 id 使用本次实际创建的商品 ID。网关的业务响应使用 JSON 外壳。成功时 `serviceCode` 为 `E00000000`，缓存查询的 `data` 是 JSON 字符串。输入校验、资源不存在和库存冲突等后端错误通过 `serviceCode` 和 `serviceMessage` 返回，业务客户端按这两个字段判断。收藏列表由普通 Flux 聚合成 `data` 数组，空列表返回 `data: []`。部分删除接口返回空数据。向量写入的 `data` 为布尔值，查询的 `data` 为包含 `id`、`score`、`category` 的数组。
