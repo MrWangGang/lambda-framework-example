@@ -6,7 +6,7 @@
 
 - JDK 27 和 IntelliJ IDEA 内置 Maven。
 - 先在框架仓库执行 `./scripts/mvn.sh clean install`。
-- 示例根目录执行 `cp .env.example .env`，填写环境变量。真实服务器、账号、Nacos 接入、COS、短信和 GitHub SSH 见本机《第三方配置.md》。
+- 示例根目录执行 `cp .env.example .env`，填写环境变量。部署地址和凭据由环境变量提供。
 - Nacos 准备 `APP_NAME.properties`，位于设定的 NAMESPACE/GROUP，示例需要 `example.greeting`。首次运行可按 [启动手册](docs/QUICKSTART.md) 创建。
 - 分别在三个终端执行 `./scripts/run-service-b.sh`、`./scripts/run.sh`、`./scripts/run-gateway.sh`。B 默认监听 `127.0.0.1:7001` 的 RSocket TCP，A 默认监听 `127.0.0.1:7000` 的 RSocket TCP，网关提供 `http://127.0.0.1:8081`。所有进程使用同一 Nacos namespace 和 group。结束后在各终端按 Ctrl+C。
 
@@ -214,7 +214,7 @@ socket.onError(error => console.error(error))
 
 前面的运行说明对应本仓库现有示例。下文适用于新建业务微服务。
 
-版本日期为 **2026-11-10**。本规范供开发者和智能体统一 Java 项目的结构、接口、数据模型和运行配置。部署地址、账号、云资源与 GitHub SSH 认证配置集中到本地《第三方配置.md》。仓库中的示例使用本机地址和环境变量。
+版本日期为 **2026-11-10**。本规范供开发者和智能体统一 Java 项目的结构、接口、数据模型和运行配置。部署地址与凭据由部署环境提供。SSH 私钥由本机保管。仓库中的示例使用本机地址和环境变量。
 
 ### GitHub 仓库
 
@@ -429,7 +429,7 @@ return mongo.updateFirst(filter, deduction, SkuEntity.class)
 | RabbitMQ | mq 模块继承 DefaultReactiveRabbitMQConfig。延迟交换机需要插件，处理结果落库后再确认消费。 |
 | Nacos | 配置 namespace、group、服务名与注册端口。区分 HTTP 端口与 RSocket 端口。 |
 | Qdrant | 示例通过 WebClient 访问，按集合定义维度、距离函数、ID 与 payload。 |
-| 对象存储与短信 | 环境值和对接资料见本地《第三方配置.md》。 |
+| 对象存储与短信 | 通过部署环境注入凭据，接口按云服务文档配置。 |
 
 ### Nacos 配置与 Data ID 命名
 
@@ -530,7 +530,7 @@ description: 按统一风格开发、修改或审查 Lambda Framework Java 后�
 
 新建项目或微服务前确认项目名称。用户已提供时直接使用。缺少名称时询问，等待期间可以检查现有代码和准备设计。用已确认的名称派生 Maven artifactId、`com.<项目名>` 包根、Spring 应用名、服务发现名和 Nacos Data ID `<项目名称>.properties`。
 
-仓库版规范位于 `../../docs/Java后端开发与架构规范.md`，本机安装版随技能提供 `references/Java后端开发与架构规范.md`。环境值从本地《第三方配置.md》或环境变量读取。提交前检查真实凭据是否混入 Git。
+仓库版规范位于 `../../docs/Java后端开发与架构规范.md`，本机安装版随技能提供 `references/Java后端开发与架构规范.md`。环境值由部署环境或本机环境变量提供。提交前检查真实凭据是否混入 Git。
 
 - 业务微服务拆为 `<项目名>-service` 和 `<项目名>-facade`。service 依赖 facade，RPC 调用方只依赖 facade。
 - 对外接口放 facade 模块的 `facade` 包，服务端实现放 service 模块的 `facade` 包。业务类 `UserServiceImpl` 直接放 `service` 包，省略业务接口和 `impl` 子包。

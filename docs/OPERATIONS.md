@@ -14,7 +14,7 @@
 | Compose 配置 | /opt/app-services/compose.yaml |
 | 凭据 | 服务器 .env、Redis ACL 文件、Mongo keyfile 等私有文件 |
 | 本机项目配置 | 示例根目录 .env，Git 忽略 |
-| 实际服务器地址、口令、SSH 私钥 | 本地私有《第三方配置.md》 |
+| 部署地址与凭据 | 使用部署环境变量，SSH 私钥由本机保管 |
 
 公开操作命令用 SERVICE_HOST 占位。Docker Compose 文件在服务器，**不在此仓库**；本文不是完整的新服务器一键安装脚本。
 
