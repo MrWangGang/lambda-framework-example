@@ -8,7 +8,7 @@
 
 Service A 的 `app` 模块分为 `controller`、`service`、`repository`、`po`、`contract` 和 `facade` 实现。RPC 接口与 record 位于独立的 `service-a/facade` 模块。Service B 依赖这个 Facade JAR。
 
-新增业务用 Controller 管参数边界，Service 处理业务规则，Repository 负责 Mongo 查询或 Qdrant 集合访问。返回 Mono 或 Flux，把持久化操作串联返回。
+Controller 只绑定请求和调用 Service。`*ServiceImpl` 用 `@Resource` 注入依赖，在 Service 完成校验、业务规则和响应转换。Repository 负责 Mongo 查询或 Qdrant 集合访问。返回 Mono 或 Flux，把持久化操作串联返回。
 
 ## 2. 用户体系
 

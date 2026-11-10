@@ -51,8 +51,8 @@ HTTP 路由 `rb://service-a` 覆盖 `/api/**`。前端发送 ObjectId 的 24 位
 
 - [ProductRepository](service-a/app/src/main/java/com/lambda/example/servicea/repository/ProductRepository.java) 用 MongoDB 查询与分页。
 - [VectorRepository](service-a/app/src/main/java/com/lambda/example/servicea/repository/VectorRepository.java) 绑定 Qdrant 集合，响应式写入与相似度查询。
-- [CacheService](service-a/app/src/main/java/com/lambda/example/servicea/service/CacheService.java) 用 Redis 管理缓存。
-- [DelayedMessageService](service-a/app/src/main/java/com/lambda/example/servicea/service/DelayedMessageService.java) 用 RabbitMQ 延迟投递、手动确认和 MongoDB 回执。
+- [CacheServiceImpl](service-a/app/src/main/java/com/lambda/example/servicea/service/CacheServiceImpl.java) 用 Redis 管理缓存。
+- [DelayedMessageServiceImpl](service-a/app/src/main/java/com/lambda/example/servicea/service/DelayedMessageServiceImpl.java) 用 RabbitMQ 延迟投递、手动确认和 MongoDB 回执。
 - [SessionController](service-a/app/src/main/java/com/lambda/example/servicea/controller/SessionController.java) 展示登录、读取身份和注销。
 
 | 业务入口 | 对应组件 |
@@ -66,11 +66,11 @@ HTTP 路由 `rb://service-a` 覆盖 `/api/**`。前端发送 ObjectId 的 24 位
 
 ## WSS 与双向 Fory RPC
 
-小程序连接 `wss://网关域名/ws/api/chat/exchange`，在握手时传 Bearer 令牌。本机 WebSocket 客户端使用 `ws://127.0.0.1:8081/ws/api/chat/exchange`。网关的 `ws://service-b` 路由剥掉 `/ws` 前缀，B 把业务流直接传给 A。
+小程序连接 `wss://网关域名/ws/api/chat/exchange`，在握手时传 Bearer 令牌。本机 WebSocket 客户端使用 `ws://127.0.0.1:8081/ws/api/chat/exchange`。网关的 `ws://service-b` 路由剥掉 `/ws` 前缀，B 由 `ChatRelayServiceImpl` 使用 `@RSocketRpc("service-a")` 把业务流直接传给 A。
 
 ~~~java
-@RSocketRpc("service-a")
-private ChatFacade chat;
+@Resource
+private ChatRelayServiceImpl chat;
 
 @MessageMapping("/api/chat/exchange")
 public BiFlux<ChatFacade.Receipt> exchange(Flux<ChatFacade.Message> messages) {
@@ -83,6 +83,6 @@ A 在 `service-a/facade` 声明 `ChatFacade.exchange`，在 `service-a/app` 用 
 <details>
 <summary>展开开发规范与智能体技能入口</summary>
 
-[开发规范技能](https://github.com/MrWangGang/lambda-framework/blob/main/skills/lambda-java-backend/SKILL.md) · [架构与开发规范](https://github.com/MrWangGang/lambda-framework/blob/main/docs/Java后端开发与架构规范.md)
+[开发规范技能](https://github.com/MrWangGang/lambda-framework/blob/main/skills/lambda-java-backend/SKILL.md)
 
 </details>

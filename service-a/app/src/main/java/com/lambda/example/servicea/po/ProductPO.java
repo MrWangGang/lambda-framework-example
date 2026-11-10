@@ -29,7 +29,7 @@ public class ProductPO extends UnifyPO<ObjectId> {
     }
 
     public enum Status implements ConverterEnum {
-        ACTIVE("active", "在售"), INACTIVE("inactive", "下架");
+        ACTIVE("在售", "商品可购买"), INACTIVE("下架", "商品已下架");
 
         private final String value;
         private final String description;

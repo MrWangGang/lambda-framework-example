@@ -1,10 +1,8 @@
 package com.lambda.example.servicea.controller;
 
-import com.lambda.example.servicea.service.CatalogEventService;
-import jakarta.validation.Valid;
-import jakarta.validation.constraints.NotNull;
-import jakarta.validation.constraints.Pattern;
-import org.bson.types.ObjectId;
+import com.lambda.example.servicea.contract.CatalogEventContract;
+import com.lambda.example.servicea.service.CatalogEventServiceImpl;
+import jakarta.annotation.Resource;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.handler.annotation.Payload;
@@ -14,22 +12,16 @@ import reactor.core.publisher.Mono;
 @Controller
 @ConditionalOnProperty(name = {"lambda.mq.kafka.bootstrap-servers", "example.kafka.topic"})
 public class CatalogEventController {
-    private final CatalogEventService events;
-
-    public CatalogEventController(CatalogEventService events) {
-        this.events = events;
-    }
+    @Resource
+    private CatalogEventServiceImpl events;
 
     @MessageMapping("/api/catalog/event/publish")
-    public Mono<CatalogEventService.Event> publish(@Valid @Payload PublishRequest input) {
-        return events.publish(input.productId());
+    public Mono<CatalogEventContract.Event> publish(@Payload CatalogEventContract.PublishRequest input) {
+        return events.publish(input);
     }
 
     @MessageMapping("/api/catalog/event/find")
-    public Mono<CatalogEventService.Event> find(@Valid @Payload FindRequest input) {
-        return events.find(input.eventId());
+    public Mono<CatalogEventContract.Event> find(@Payload CatalogEventContract.FindRequest input) {
+        return events.find(input);
     }
-
-    public record PublishRequest(@NotNull ObjectId productId) {}
-    public record FindRequest(@NotNull @Pattern(regexp = "[0-9]{1,19}") String eventId) {}
 }

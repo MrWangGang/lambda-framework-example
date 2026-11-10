@@ -14,14 +14,7 @@ public final class DeliveryReceiptContract {
 
     public record FindRequest(@NotNull ObjectId id) {}
 
-    public record Message(ObjectId id, String content, Instant createdAt) {
-        public Message {
-            if (id == null || content == null || content.isBlank()
-                    || content.length() > 10000 || createdAt == null) {
-                throw new IllegalArgumentException("Invalid notification fields");
-            }
-        }
-    }
+    public record Message(ObjectId id, String content, Instant createdAt) {}
 
     public record Detail(ObjectId id, String content, Instant createdAt, Instant receivedAt) {
         public static Detail from(DeliveryReceiptPO entity) {

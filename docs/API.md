@@ -6,7 +6,7 @@
 |---|---|
 | MongoDB id、userId、productId | 24 位十六进制 ObjectId 字符串 |
 | price、stock、quantity、version | 字符串。price 支持最多两位小数，数量与版本在业务边界转换 |
-| status | active 或 inactive |
+| status | 在售或下架 |
 | page、size、limit | 正整数字符串。页码从 1 开始，默认 1/10，页大小不超过 100 |
 | beforeTime、beforeId | 同时传入，使用前一页返回的 nextBeforeTime、nextBeforeId |
 | requestId | 每次购买操作的稳定幂等键 |
@@ -29,7 +29,7 @@ curl -fsS -X POST "$base/message/sendDelayed" -H "Authorization: Bearer ${TOKEN}
   -d '{"content":"hello","delayMillis":"2000"}'
 ~~~
 
-查询示例中的 id 使用本次实际创建的商品 ID。网关的业务响应使用 JSON 外壳。成功时 `serviceCode` 为 `E00000000`，缓存查询的 `data` 是 JSON 字符串。输入校验、资源不存在和库存冲突等后端错误通过 `serviceCode` 和 `serviceMessage` 返回，业务客户端按这两个字段判断。收藏列表由普通 Flux 聚合成 `data` 数组，空列表返回 `data: []`。部分删除接口返回空数据。向量写入的 `data` 为布尔值，查询的 `data` 为包含 `id`、`score`、`category` 的数组。
+查询示例中的 id 使用本次实际创建的商品 ID。网关的业务响应使用 JSON 外壳。成功时 `serviceCode` 为 `00000000`，框架错误为 `S` 加七位数字，业务错误为 `B` 加七位数字，缓存查询的 `data` 是 JSON 字符串。输入校验、资源不存在和库存冲突等后端错误通过 `serviceCode` 和 `serviceMessage` 返回，业务客户端按这两个字段判断。收藏列表由普通 Flux 聚合成 `data` 数组，空列表返回 `data: []`。部分删除接口返回空数据。向量写入的 `data` 为布尔值，查询的 `data` 为包含 `id`、`score`、`category` 的数组。
 
 
 ## 单向流与可选组件

@@ -97,7 +97,7 @@ db.articles.createIndex({authorId:1, status:1, createdAt:-1, _id:-1})
 ## 5. 多对一：商品与商家
 
 ~~~javascript
-{_id:ObjectId("65a000000000000000000003"), merchantId:ObjectId("65a000000000000000000004"), name:"示例商品", price:"99.00", status:"active"}
+{_id:ObjectId("65a000000000000000000003"), merchantId:ObjectId("65a000000000000000000004"), name:"示例商品", price:"99.00", status:"在售"}
 ~~~
 
 商家独立存在 merchants 集合，商品保存 merchantId。商家改联系电话时只更新商家文档。
