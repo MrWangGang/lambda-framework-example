@@ -18,22 +18,22 @@ public class VectorService {
         this.vectors = vectors;
     }
 
-    public Mono<Boolean> upsert(UUID pointId, List<Double> input, String category) {
+    public Mono<Boolean> upsert(UUID pointId, List<Float> input, String category) {
         return Mono.defer(() -> vectors.save(pointId, validate(input), category));
     }
 
-    public Flux<VectorHit> query(List<Double> input, int limit) {
+    public Flux<VectorHit> query(List<Float> input, int limit) {
         return Flux.defer(() -> vectors.search(validate(input), limit))
                 .map(match -> new VectorHit(match.id(), match.score(), match.category()));
     }
 
-    private static List<Float> validate(List<Double> input) {
-        var values = input.stream().map(Double::floatValue).toList();
-        if (values.size() != VectorRepository.DIMENSIONS || values.stream().anyMatch(value -> !Float.isFinite(value))
-                || values.stream().allMatch(value -> value == 0.0f)) {
+    private static List<Float> validate(List<Float> input) {
+        if (input.size() != VectorRepository.DIMENSIONS
+                || input.stream().anyMatch(value -> value == null || !Float.isFinite(value))
+                || input.stream().allMatch(value -> value == 0.0f)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Use three finite values and a nonzero vector");
         }
-        return values;
+        return input;
     }
 
     public record VectorHit(String id, float score, String category) {}

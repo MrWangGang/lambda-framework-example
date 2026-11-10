@@ -9,7 +9,7 @@ import reactor.core.publisher.Flux;
 
 @Controller
 public class ChatController {
-    @RSocketRpc
+    @RSocketRpc("service-a")
     private ChatFacade chat;
 
     @MessageMapping("/api/chat/exchange")

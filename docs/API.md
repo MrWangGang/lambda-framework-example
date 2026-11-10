@@ -12,7 +12,7 @@
 | requestId | 每次购买操作的稳定幂等键 |
 | ttlSeconds | 1 至 86400 的整数字符串 |
 | delayMillis | 0 至 60000 的整数字符串 |
-| vector | 三个有限数值字符串，向量至少一维非零 |
+| vector | 三个有限的 JSON 数值或数字字符串，向量至少一维非零 |
 | 向量 id | UUID |
 
 先登录获取 `data.token`。在终端中设置 `TOKEN` 后执行以下调用。会话信息、快照与注销分别使用 `/session/whoami`、`/session/profile` 和 `/session/logout`，请求体为 `{}`。
@@ -30,3 +30,17 @@ curl -fsS -X POST "$base/message/sendDelayed" -H "Authorization: Bearer ${TOKEN}
 ~~~
 
 查询示例中的 id 使用本次实际创建的商品 ID。网关的业务响应使用 JSON 外壳。成功时 `serviceCode` 为 `E00000000`，缓存查询的 `data` 是 JSON 字符串。输入校验、资源不存在和库存冲突等后端错误通过 `serviceCode` 和 `serviceMessage` 返回，业务客户端按这两个字段判断。收藏列表由普通 Flux 聚合成 `data` 数组，空列表返回 `data: []`。部分删除接口返回空数据。向量写入的 `data` 为布尔值，查询的 `data` 为包含 `id`、`score`、`category` 的数组。
+
+
+## 单向流与可选组件
+
+所有请求带上登录令牌。
+
+| POST 路径 | JSON 请求体 | 返回 |
+|---|---|---|
+| `/api/purchase/summary` | `{"userId":"507f1f77bcf86cd799439011"}` | 订单按商品分类的聚合数组，ObjectId 直接绑定 Mongo 聚合参数 |
+| `/api/product/export` | `{"category":"book","limit":"20"}` | NDJSON，每行一个业务响应外壳 |
+| `/api/catalog/maintenance/rebuild` | `{"category":"book","lockProvider":"REDIS"}` | 雪花任务 ID 与缓存中的商品计数。启用 ZooKeeper 时也可指定 `ZOOKEEPER` |
+| `/api/catalog/event/publish` | `{"productId":"507f1f77bcf86cd799439011"}` | Kafka 发布确认后返回事件 ID |
+| `/api/catalog/event/find` | `{"eventId":"事件ID"}` | 消费成功后读取 MongoDB 回执 |
+| `/api/partner/status` | `{}` | 外部服务状态 |

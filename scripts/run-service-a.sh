@@ -8,8 +8,7 @@ if [ -f .env ]; then
   set +a
 fi
 : "${JAVA_HOME:?Set JAVA_HOME to JDK 27}"
-: "${SERVICE_HOST:?Set SERVICE_HOST}"
-: "${SERVICE_PASSWORD:?Set SERVICE_PASSWORD}"
-export JAVA_HOME SERVICE_HOST SERVICE_PASSWORD
+: "${NACOS_SERVER_ADDR:?Set NACOS_SERVER_ADDR}"
+export JAVA_HOME NACOS_SERVER_ADDR
 ./scripts/mvn.sh -B -pl service-a/app -am package
 exec "$JAVA_HOME/bin/java" --enable-native-access=ALL-UNNAMED -jar service-a/app/target/lambda-example-service-a-app-1.0.0-SNAPSHOT.jar "$@"

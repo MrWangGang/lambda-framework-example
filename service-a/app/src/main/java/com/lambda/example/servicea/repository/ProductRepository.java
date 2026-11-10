@@ -1,7 +1,8 @@
 package com.lambda.example.servicea.repository;
 
+import com.lambda.example.servicea.contract.ProductContract;
 import org.bson.types.ObjectId;
-import com.lambda.example.servicea.entity.ProductEntity;
+import com.lambda.example.servicea.po.ProductPO;
 import org.lambda.framework.repository.operation.*;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
@@ -15,18 +16,22 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 @Repository
-public class ProductRepository implements ReactiveUnifyPagingRepositoryOperation<ProductEntity> {
+public class ProductRepository implements ReactiveUnifyPagingRepositoryOperation<ProductPO> {
     private final ReactiveMongoTemplate mongo;
 
     public ProductRepository(ReactiveMongoTemplate mongo) {
         this.mongo = mongo;
     }
 
-    public Mono<ProductEntity> findById(ObjectId id) {
-        return mongo.findOne(Query.query(Criteria.where("_id").is(id)), ProductEntity.class);
+    public Mono<ProductPO> findById(ObjectId id) {
+        return mongo.findOne(Query.query(Criteria.where("_id").is(id)), ProductPO.class);
     }
 
-    public Mono<Paged<ProductEntity>> page(ProductEntity.PageDTO input) {
+    public Mono<Long> countCategory(String category) {
+        return mongo.count(Query.query(Criteria.where("category").is(category)), ProductPO.class);
+    }
+
+    public Mono<Paged<ProductPO>> page(ProductContract.PageRequest input) {
         int page = input.page() == null ? 1 : Integer.parseInt(input.page());
         int size = input.size() == null ? 10 : Integer.parseInt(input.size());
         if (page < 1 || size < 1 || size > 100) {
@@ -34,12 +39,12 @@ public class ProductRepository implements ReactiveUnifyPagingRepositoryOperation
         }
         var paging = Paging.builder().page(page).size(size).build();
         return queryPage(paging, input.category(), Sort.by(Sort.Direction.DESC, "createdAt", "_id"),
-                new CountedPageQuery<String, ProductEntity>() {
+                new CountedPageQuery<String, ProductPO>() {
                     public Mono<Long> count(String category) {
-                        return mongo.count(Query.query(Criteria.where("category").is(category)), ProductEntity.class);
+                        return mongo.count(Query.query(Criteria.where("category").is(category)), ProductPO.class);
                     }
-                    public Flux<ProductEntity> query(String category, Pageable pageable) {
-                        return mongo.find(Query.query(Criteria.where("category").is(category)).with(pageable), ProductEntity.class);
+                    public Flux<ProductPO> query(String category, Pageable pageable) {
+                        return mongo.find(Query.query(Criteria.where("category").is(category)).with(pageable), ProductPO.class);
                     }
                 });
     }

@@ -1,12 +1,14 @@
 package com.lambda.example.servicea.service;
 
+import com.lambda.example.servicea.contract.DeliveryReceiptContract;
 import jakarta.annotation.PreDestroy;
 import org.bson.types.ObjectId;
-import com.lambda.example.servicea.entity.DeliveryReceiptEntity;
-import com.lambda.example.servicea.entity.DeliveryReceiptEntity.MessageDTO;
+import com.lambda.example.servicea.po.DeliveryReceiptPO;
+import com.lambda.example.servicea.contract.DeliveryReceiptContract.Message;
 import org.lambda.framework.common.mq.RabbitMQDeclare;
 import org.lambda.framework.common.util.sample.JsonUtil;
 import org.lambda.framework.mq.config.rabbitmq.RabbitMQReactiveOperate;
+import org.lambda.framework.repository.operation.MongoAuditUpdates;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -64,12 +66,14 @@ public class DelayedMessageService {
                     .block(Duration.ofSeconds(10));
             consumer = receiver.consumeManualAck(queue, new ConsumeOptions().qos(32))
                     .flatMap(delivery -> Mono.defer(() -> {
-                        MessageDTO message = JsonUtil.stringToObj(new String(delivery.getBody(), StandardCharsets.UTF_8), MessageDTO.class)
+                        Message message = JsonUtil.stringToObj(new String(delivery.getBody(), StandardCharsets.UTF_8), Message.class)
                                 .orElseThrow(() -> new IllegalArgumentException("Invalid message"));
                         Query id = Query.query(Criteria.where("_id").is(message.id()));
+                        Instant receivedAt = Instant.now();
                         Update receipt = new Update().setOnInsert("content", message.content())
-                                .setOnInsert("createdAt", message.createdAt()).setOnInsert("receivedAt", Instant.now());
-                        return mongo.upsert(id, receipt, DeliveryReceiptEntity.class).doOnSuccess(result -> delivery.ack());
+                                .setOnInsert("receivedAt", receivedAt);
+                        return mongo.upsert(id, MongoAuditUpdates.insertOnly(receipt, message.createdAt(), receivedAt),
+                                DeliveryReceiptPO.class).doOnSuccess(result -> delivery.ack());
                     }).onErrorResume(error -> {
                         log.error("Delivery failed; routing to dead-letter queue", error);
                         delivery.nack(false);
@@ -79,12 +83,12 @@ public class DelayedMessageService {
                     .subscribe(result -> {}, error -> log.error("Notification consumer stopped", error));
         };
     }
-    public Mono<MessageDTO> send(DeliveryReceiptEntity.SendDTO input) {
+    public Mono<Message> send(DeliveryReceiptContract.SendRequest input) {
         long delayMillis = Long.parseLong(input.delayMillis());
         if (delayMillis > 60000) {
             return Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST, "delayMillis must be 0..60000"));
         }
-        MessageDTO message = new MessageDTO(new ObjectId(), input.content(), Instant.now());
+        Message message = new Message(new ObjectId(), input.content(), Instant.now());
         return rabbit.sendDelay(declaration(), delayMillis, JsonUtil.objToString(message)).thenReturn(message);
     }
 
@@ -92,8 +96,8 @@ public class DelayedMessageService {
         return new RabbitMQDeclare("notify", exchange, queue);
     }
 
-    public Mono<DeliveryReceiptEntity> receipt(ObjectId id) {
-        return mongo.findById(id, DeliveryReceiptEntity.class)
+    public Mono<DeliveryReceiptPO> receipt(ObjectId id) {
+        return mongo.findById(id, DeliveryReceiptPO.class)
                 .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "Message not received yet")));
     }
     @PreDestroy

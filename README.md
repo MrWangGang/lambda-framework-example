@@ -12,7 +12,7 @@ gateway/     前端 HTTP、WSS 与认证入口
 
 ## 启动
 
-先在框架仓库执行 `./scripts/mvn.sh clean install`。在示例根目录复制 `.env.example` 为 `.env`，按 [配置手册](docs/CONFIGURATION.md) 提供连接值与凭据。模板默认使用单机，附各组件的集群配置。Mongo 单机也使用单节点副本集。三个应用使用同一 Nacos namespace 和 group。
+先在框架仓库执行 `./scripts/mvn.sh clean install`。在示例根目录复制 `.env.example` 为 `.env`，填入 Nacos 引导信息，再按 [配置手册](docs/CONFIGURATION.md) 将 [业务配置模板](nacos) 发布到 Nacos。模板默认单机，附各组件的集群配置。Mongo 单机也使用单节点副本集。三个应用使用同一 Nacos namespace 和 group。
 
 分别在终端启动。
 
@@ -47,18 +47,29 @@ HTTP 路由 `rb://service-a` 覆盖 `/api/**`。前端发送 ObjectId 的 24 位
 
 ## 数据层示例
 
+商品、订单、收藏和消息回执都继承 `UnifyPO<ObjectId>`，统一 ID、创建时间、更新时间和版本。已有 MongoDB 集合升级前按 [迁移手册](https://github.com/MrWangGang/lambda-framework/blob/main/docs/DATA-AND-PAGINATION.md#旧集合迁移) 回填缺失字段。
+
 - [ProductRepository](service-a/app/src/main/java/com/lambda/example/servicea/repository/ProductRepository.java) 用 MongoDB 查询与分页。
 - [VectorRepository](service-a/app/src/main/java/com/lambda/example/servicea/repository/VectorRepository.java) 绑定 Qdrant 集合，响应式写入与相似度查询。
 - [CacheService](service-a/app/src/main/java/com/lambda/example/servicea/service/CacheService.java) 用 Redis 管理缓存。
 - [DelayedMessageService](service-a/app/src/main/java/com/lambda/example/servicea/service/DelayedMessageService.java) 用 RabbitMQ 延迟投递、手动确认和 MongoDB 回执。
 - [SessionController](service-a/app/src/main/java/com/lambda/example/servicea/controller/SessionController.java) 展示登录、读取身份和注销。
 
+| 业务入口 | 对应组件 |
+|---|---|
+| `POST /api/product/export` | `UiFlux` 单向 NDJSON，发送商品游标请求 |
+| `POST /api/catalog/maintenance/rebuild` | Redis 或 ZooKeeper 锁、Redis 计数缓存、雪花任务 ID |
+| `POST /api/catalog/event/publish`、`/api/catalog/event/find` | Kafka 商品事件、雪花事件 ID 和 MongoDB 回执 |
+| `POST /api/partner/status` | 框架 HTTP 客户端访问 Nacos 配置的外部服务 |
+
+可选组件的使用方式和请求示例见 [API](docs/API.md)。
+
 ## WSS 与双向 Fory RPC
 
 小程序连接 `wss://网关域名/ws/api/chat/exchange`，在握手时传 Bearer 令牌。本机 WebSocket 客户端使用 `ws://127.0.0.1:8081/ws/api/chat/exchange`。网关的 `ws://service-b` 路由剥掉 `/ws` 前缀，B 把业务流直接传给 A。
 
 ~~~java
-@RSocketRpc
+@RSocketRpc("service-a")
 private ChatFacade chat;
 
 @MessageMapping("/api/chat/exchange")
@@ -67,7 +78,7 @@ public BiFlux<ChatFacade.Receipt> exchange(Flux<ChatFacade.Message> messages) {
 }
 ~~~
 
-A 在 `service-a/facade` 声明 `service-a.chatFacade.exchange`，在 `service-a/app` 用 `@RSocketFacade` 实现。前端每条文本消息发送一个 JSON 值，例如 `{"messageId":"m-1","text":"你好"}`。每条回执独立返回，`data` 为数组。回执中的 `principal` 是网关验证后透传的用户 ID。Java RPC 的业务数据与身份元数据都用 Fory。
+A 在 `service-a/facade` 声明 `ChatFacade.exchange`，在 `service-a/app` 用 `@RSocketFacade` 实现。框架生成 `service-a.chatFacade.exchange`，重复路由会导致启动失败。前端每条文本消息发送一个 JSON 值，例如 `{"messageId":"m-1","text":"你好"}`。每条回执独立返回，`data` 为数组。回执中的 `principal` 是网关验证后透传的用户 ID。Java RPC 的业务数据与身份元数据都用 Fory。
 
 <details>
 <summary>展开开发规范与智能体技能入口</summary>
