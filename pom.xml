@@ -12,6 +12,8 @@
     <version>1.0.0-SNAPSHOT</version>
     <packaging>pom</packaging>
     <modules>
+        <module>lambda-example-service-b-facade</module>
+        <module>lambda-example-service-b</module>
         <module>lambda-example-app</module>
         <module>lambda-example-gateway</module>
     </modules>

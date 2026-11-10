@@ -132,9 +132,12 @@ example.greeting=Hello from Nacos
 
 启动会创建 Mongo 索引、Rabbit 交换机/队列与 Qdrant 集合，并开始消费消息。这些步骤各有等待上限，基础设施不可用会导致启动失败或异常。
 
-保持业务服务运行，在第二个终端启动网关。两个进程使用同一份 `.env` 和 Nacos namespace/group。
+保持服务 A 运行，在第二个终端启动服务 B，在第三个终端启动网关。三个进程使用同一份 `.env` 和 Nacos namespace/group。服务 B 的默认 Nacos Data ID 为 `lambda-example-service-b.properties`，在本地示例可省略。
 
 ~~~bash
+# 终端 2
+./scripts/run-service-b.sh
+# 终端 3
 ./scripts/run-gateway.sh
 ~~~
 

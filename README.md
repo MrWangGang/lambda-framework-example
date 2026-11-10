@@ -1,6 +1,6 @@
 # Lambda Framework Example
 
-这个示例演示用 Lambda Framework 接入 MongoDB 副本集、Redis、RabbitMQ 延迟消息、Nacos 配置和 Qdrant。所有业务 HTTP 接口用 POST 动作路径。实体、请求、响应类型与 Repository 的写法适合作为新项目参考。
+服务 A 演示用 Lambda Framework 接入 MongoDB 副本集、Redis、RabbitMQ 延迟消息、Nacos 配置和 Qdrant。服务 B 提供独立聊天回执 RPC。网关统一接入 HTTP POST 和 WebSocket。
 
 ## 构建、配置、运行
 
@@ -8,7 +8,7 @@
 - 先在框架仓库执行 `./scripts/mvn.sh clean install`。
 - 示例根目录执行 `cp .env.example .env`，填写环境变量。真实服务器、账号、Nacos 接入、COS、短信和 GitHub SSH 见本机《第三方配置.md》。
 - Nacos 准备 `APP_NAME.properties`，位于设定的 NAMESPACE/GROUP，示例需要 `example.greeting`。首次运行可按 [启动手册](docs/QUICKSTART.md) 创建。
-- 在第一个终端执行 `./scripts/run.sh` 启动业务服务，默认只监听 `127.0.0.1:7000` 的 RSocket TCP。第二个终端执行 `./scripts/run-gateway.sh`，默认提供 `http://127.0.0.1:8081`。所有示例请求访问网关地址。结束后在两个终端分别按 Ctrl+C。
+- 分别在三个终端执行 `./scripts/run-service-b.sh`、`./scripts/run.sh`、`./scripts/run-gateway.sh`。B 默认监听 `127.0.0.1:7001` 的 RSocket TCP，A 默认监听 `127.0.0.1:7000` 的 RSocket TCP，网关提供 `http://127.0.0.1:8081`。所有进程使用同一 Nacos namespace 和 group。结束后在各终端按 Ctrl+C。
 
 ~~~bash
 curl -fsS -X POST http://127.0.0.1:8081/api/system/info \
@@ -25,6 +25,7 @@ curl -fsS -X POST http://127.0.0.1:8081/api/system/info \
 | NACOS_USERNAME、NACOS_PASSWORD | Nacos 凭据，可与业务服务分离 |
 | QDRANT_API_KEY | Qdrant API key |
 | APP_NAME、APP_BIND_ADDRESS、APP_REGISTER_IP、APP_RSOCKET_PORT | 业务服务名、RSocket TCP 监听及注册地址 |
+| SERVICE_B_BIND_ADDRESS、SERVICE_B_REGISTER_IP、SERVICE_B_RSOCKET_PORT | 服务 B 的内网监听地址、注册地址及端口 |
 | GATEWAY_NAME、GATEWAY_BIND_ADDRESS、APP_PORT | 网关名、HTTP 监听地址及端口 |
 
 ## API
@@ -65,7 +66,7 @@ curl -fsS -X POST http://127.0.0.1:8081/api/vector/search \
   -d '{"vector":["1","0","0"],"limit":"5"}'
 ~~~
 
-创建返回的 id、version 和游标以实际值为准。金额以字符串保存，库存和数量字符串在原子更新处转换。状态值为 active 或 inactive。旧版 REST 路由、String 主键和 Decimal128 金额需要迁移。先在新库验收。
+创建返回的 id、version 和游标以实际值为准。金额以字符串保存，库存和数量字符串在原子更新处转换。状态值为 active 或 inactive。旧版 REST 路由、String 主键和 Decimal128 金额需要迁移。
 
 ## 源码布局与框架使用
 
@@ -73,28 +74,93 @@ curl -fsS -X POST http://127.0.0.1:8081/api/vector/search \
 |---|---|
 | org.lambda.example.app.entity | ProductEntity、FavoriteEntity、PurchaseEntity、DeliveryReceiptEntity 与所属静态 DTO |
 | org.lambda.example.app.controller | RSocket ExampleController 与缓存、向量等无实体归属 DTO |
-| org.lambda.example.gateway | 独立 reactive 网关，只依赖框架与 Nacos，使用 rb:// 转发 |
+| org.lambda.example.gateway | 独立 reactive 网关，只依赖框架与 Nacos，使用 rb:// 与 ws:// 转发 |
 | org.lambda.example.app.service | 商品、缓存、延迟消息、向量业务 |
 | org.lambda.example.app.repository | ProductRepository、ObjectId 查询、框架分页 |
 | org.lambda.example.app.config | 框架 Mongo、Redis、RabbitMQ 配置与事务 |
 
 分页按分类过滤、createdAt 和 ObjectId 排序。游标把两个边界字段一起传入。购买的 requestId 是业务幂等键，MongoDB 主键是独立 ObjectId。延迟消息消费后幂等写回执再 ACK。Redis 和 Qdrant 用独立业务前缀。
 
-## RPC、网关和聊天验证
+## 服务 A 调用服务 B
 
-示例由独立网关转发 JSON 到 RSocket 服务。Java 服务间原生 RPC 固定用 Fory。chat-api 与 chat-service 是仓库外验收项目，分别使用 `org.chat.api` 和 `org.chat.service`。启动真实网关进程，验证 Java RPC 请求 DTO、`Paged<ViewDTO>`、HTTP NDJSON request-stream 与 request-channel。单聊文字、群聊表情、图片和视频引用通过 MongoDB 写入与读取，PNG 与分块 MP4 通过网关按字节转发。完整网关配置和客户端命令见 [框架 README](https://github.com/MrWangGang/lambda-framework#readme)。
+| Maven 模块 | 职责 |
+|---|---|
+| `lambda-example-app` | 服务 A，接收网关请求、运行中间件示例、调用聊天 Facade |
+| `lambda-example-service-b` | 服务 B，实现聊天回执逻辑 |
+| `lambda-example-service-b-facade` | B 的共享 Java RPC 契约，供 A 依赖 |
+| `lambda-example-gateway` | 前端 HTTP 与 WSS 的统一入口 |
 
-按测试清单清理 MongoDB 临时库、Redis 测试键、Qdrant 集合与 RabbitMQ 测试资源。生产项目按业务实现登录、群成员权限、离线同步与媒体文件授权。用户继承、ObjectId、枚举、分页与技能规则见下文。
+服务 A 的 Controller 将输入流传给服务 B 的 Facade。
+
+~~~java
+@RSocketRpc
+private ChatFacade chat;
+
+@MessageMapping("/api/chat/exchange")
+public BiFlux<ChatFacade.Receipt> exchange(Flux<ChatFacade.Message> messages) {
+    return chat.exchange(messages);
+}
+~~~
+
+服务 B 在 Facade 模块声明 RPC 路由和业务 record。
+
+~~~java
+public interface ChatFacade {
+    @MessageMapping("lambda-example-service-b.chatFacade.exchange")
+    BiFlux<Receipt> exchange(Flux<Message> messages);
+
+    record Message(String messageId, String text) {}
+    record Receipt(String messageId, String text) {}
+}
+~~~
+
+网关从 `/ws/chat` 转发到 A 的 `/api/chat/exchange`。部署时把路由发布到网关项目名对应的 Nacos Data ID，默认是 `lambda-example-gateway.properties`。
+
+~~~properties
+spring.cloud.gateway.server.webflux.routes[1].id=chat-websocket
+spring.cloud.gateway.server.webflux.routes[1].uri=ws://lambda-example-app
+spring.cloud.gateway.server.webflux.routes[1].predicates[0]=Path=/ws/chat
+spring.cloud.gateway.server.webflux.routes[1].filters[0]=SetPath=/api/chat/exchange
+~~~
+
+小程序使用已配置的 WSS 合法域名。本机 WebSocket 客户端可连接 `ws://127.0.0.1:8081/ws/chat`。
+
+~~~javascript
+const socket = uni.connectSocket({ url: 'wss://api.example.com/ws/chat' })
+
+function sendMessage(messageId, text) {
+  socket.send({ data: JSON.stringify({ messageId, text }) })
+}
+
+socket.onOpen(() => sendMessage('m-1', '你好'))
+socket.onMessage(({ data }) => {
+  const reply = JSON.parse(data)
+  if (reply.serviceCode !== 'E00000000') {
+    console.error(reply.serviceMessage)
+    return
+  }
+  for (const receipt of reply.data) {
+    console.log(receipt.messageId, receipt.text)
+  }
+})
+socket.onError(error => console.error(error))
+~~~
+
+单条回执格式如下。同一连接可继续发送下一条消息。
+
+~~~json
+{"serviceCode":"E00000000","serviceMessage":"操作成功","data":[{"messageId":"m-1","text":"你好"}]}
+~~~
 
 ## 相关操作手册
 
-[启动](docs/QUICKSTART.md) · [API](docs/API.md) · [配置](docs/CONFIGURATION.md) · [建模](docs/DATA-MODELING.md) · [部署](docs/OPERATIONS.md) · [腾讯云](docs/CLOUD-INTEGRATION.md) · [验收](docs/TESTING.md) · [排错](docs/TROUBLESHOOTING.md) · [扩展](docs/EXTENDING.md)
+[启动](docs/QUICKSTART.md) · [API](docs/API.md) · [配置](docs/CONFIGURATION.md) · [建模](docs/DATA-MODELING.md) · [部署](docs/OPERATIONS.md) · [腾讯云](docs/CLOUD-INTEGRATION.md) · [排错](docs/TROUBLESHOOTING.md) · [扩展](docs/EXTENDING.md)
 
 ## Java 后端开发与架构规范
 
-前面的运行说明对应本仓库现有示例。下文是新建业务微服务的项目结构和契约规范。
+前面的运行说明对应本仓库现有示例。下文适用于新建业务微服务。
 
-版本日期为 **2026-11-10**。本规范供开发者和智能体统一 Java 项目的结构、接口、数据模型和验收方式。部署地址、账号、云资源与 GitHub SSH 认证配置集中到本地《第三方配置.md》。仓库中的示例使用本机地址和环境变量。
+版本日期为 **2026-11-10**。本规范供开发者和智能体统一 Java 项目的结构、接口、数据模型和运行配置。部署地址、账号、云资源与 GitHub SSH 认证配置集中到本地《第三方配置.md》。仓库中的示例使用本机地址和环境变量。
 
 ### GitHub 仓库
 
@@ -137,7 +203,7 @@ user/
 - 公开请求和响应统一声明为对外 Facade 接口内的 `record`。入参按动作命名，例如 `FindRequest`、`ChangePasswordRequest`、`PageRequest`。返回按用途命名，例如 `Detail`、`Summary`、`PageItem`。外层 Facade 已表达业务归属，内层名称不重复加表名或实体名，省略 DTO、VO、PO 后缀。
 - Controller 与 Facade 实现直接注入 `UserServiceImpl`，复用 Facade 的 record。外部类只导入 `UserFacade`，签名写 `UserFacade.FindRequest` 和 `UserFacade.Detail`。公开契约集中在接口，实体和实现类不声明公开入参、出参。
 - 实体留在 service 模块。Controller、Facade 接口和 Service 的公开业务方法使用契约 record，Service 负责从持久化实体映射公开字段。密码哈希和内部权限留在服务端。公开契约按业务需要显式选择可见的审计字段或并发控制字段。
-- 对外业务 HTTP 统一经网关访问，使用 POST 动作路径，例如 `/api/user/find`。业务服务的路由统一使用 `@MessageMapping`。承接网关转发的路径以 `/` 开头，并使用固定路径。动态业务条件放请求体。请求条件放 JSON 请求体，空请求可用 `EmptyRequest`。RPC 保留 `Mono<UserFacade.Detail>`、`Flux<UserFacade.Detail>` 等完整类型。底层对字符串与数字的编码兼容性独立测试。
+- 对外业务 HTTP 统一经网关访问，使用 POST 动作路径，例如 `/api/user/find`。业务服务的路由统一使用 `@MessageMapping`。承接网关转发的路径以 `/` 开头，并使用固定路径。动态业务条件放请求体。请求条件放 JSON 请求体，空请求可用 `EmptyRequest`。RPC 保留 `Mono<UserFacade.Detail>`、`Flux<UserFacade.Detail>` 等完整类型。
 - 业务金额和常规业务标量以字符串建模，禁止 BigDecimal。ObjectId、库存计数、版本号、分页计数和日期保留各自的技术类型。CORS 预检、WebSocket 握手和基础设施协议遵循对应协议。
 
 ~~~java
@@ -223,13 +289,13 @@ public interface ChatMessageRepository extends ReactiveMongoRepository<ChatMessa
 }
 ~~~
 
-联调实测中，`findById(ObjectId)`、`@Query` 绑定 ObjectId、带实体映射的 `ReactiveMongoTemplate.findById(hex, Entity.class)` 均命中。原生 `Filters.eq("_id", hex)` 查不到，改成绑定 ObjectId 即命中。MongoDB 的 `@Query` 使用 BSON 查询表达式。原生驱动、Document 和聚合匹配应明确 BSON 类型，关联字段也需一致。历史字符串 ID、DECIMAL128 金额和旧索引应经过迁移后再由新实体读取。
+使用 `findById(ObjectId)` 和带 ObjectId 参数的 `@Query`。使用原生驱动时，`Filters.eq("_id", id)` 的 `id` 传 ObjectId。MongoDB 的 `@Query` 使用 BSON 查询表达式。原生驱动、Document 和聚合匹配应明确 BSON 类型，关联字段也需一致。历史字符串 ID、DECIMAL128 金额和旧索引应经过迁移后再由新实体读取。
 
-数据库实体包含枚举字段时，枚举实现 `org.lambda.framework.common.enums.ConverterEnum`，提供 `getValue()` 与 `getDescription()`。持久化值保持稳定，例如 `text`、`emoji`、`image`、`video`。框架的 Mongo 配置注册枚举读写转换器。本次联调已核对 MongoDB 存储字符串值以及 API 往返。
+数据库实体包含枚举字段时，枚举实现 `org.lambda.framework.common.enums.ConverterEnum`，提供 `getValue()` 与 `getDescription()`。持久化值保持稳定，例如 `text`、`emoji`、`image`、`video`。框架的 Mongo 配置注册枚举读写转换器。
 
 ### `@Aggregation` 中的 ObjectId
 
-供网关 JSON 使用的请求 record 用 `@JsonObjectId ObjectId` 自动接收十六进制字符串。Java RPC 的 Fory 编解码直接处理 ObjectId。业务层把原生 ID 直接交给 Repository。Repository 的 `@Aggregation` 用未加引号的 `?0`、`?1` 绑定原生参数，批量条件用 `List<ObjectId>`。已是 ObjectId 的值直接传入。各集合关联字段的 BSON 类型必须一致。顶层字段会按 Repository 实体映射，例如 `userId` 映射为 `user_id`。跨集合阶段按目标集合的实际 BSON 字段名编写并验收。
+供网关 JSON 使用的请求 record 用 `@JsonObjectId ObjectId` 自动接收十六进制字符串。Java RPC 的 Fory 编解码直接处理 ObjectId。业务层把原生 ID 直接交给 Repository。Repository 的 `@Aggregation` 用未加引号的 `?0`、`?1` 绑定原生参数，批量条件用 `List<ObjectId>`。已是 ObjectId 的值直接传入。各集合关联字段的 BSON 类型必须一致。顶层字段会按 Repository 实体映射，例如 `userId` 映射为 `user_id`。跨集合阶段按目标集合的实际 BSON 字段名编写。
 
 下面从收藏中间集合按用户过滤，关联商品和商家，再按 ObjectId 类型的评论者 ID 统计评论，最后按商家汇总。聚合结果在 `FavoriteRepository` 内定义查询投影 `record MerchantStats(@Id ObjectId merchantId, int favoriteCount, int reviewCount) {}`。Service 将投影映射到对外 Facade 中的响应 record。
 
@@ -256,9 +322,9 @@ public interface ChatMessageRepository extends ReactiveMongoRepository<ChatMessa
 Flux<FavoriteRepository.MerchantStats> stats(ObjectId userId, ObjectId reviewerId);
 ~~~
 
-实测环境为 MongoDB 9.0.4 副本集、Spring Data MongoDB 5.1.2。上面管道返回两组预期结果，根集合匹配、`$expr`、`$in` 和嵌套 `$lookup.let` 的实际命令均保留了 ObjectId。直接 `_id` 匹配时 Spring Data 在该实体上把合法的 String 转成 ObjectId。普通关联字段和 `$lookup.let` 的 String 在实测中仍是 BSON String，只命中同文本的历史字符串字段。统一使用强类型 Repository 签名，避免依赖主键的映射特例。
+统一使用强类型 Repository 签名。聚合根集合匹配、`$expr`、`$in` 和 `$lookup.let` 都绑定原生 ObjectId。Spring Data 的主键映射可能转换合法的 String。普通关联字段和跨集合条件一律显式保持 BSON 类型一致。
 
-历史数据优先迁移为统一 BSON 类型。兼容期确需处理旧字符串时，`$toObjectId` 遇到非法值会使聚合失败，`$convert` 可定义 `onError` 和 `onNull`。不要在热查询中逐行转换索引字段。实测直接匹配走 `user_product`，扫描 5 个索引键。对字段做 `$convert` 时扫描了 1,207 条文档，索引键扫描为 0。上线前用代表性数据的 `explain("executionStats")` 核对根集合与各 `$lookup` 的执行计划。[Spring Data 聚合方法](https://docs.spring.io/spring-data/mongodb/reference/mongodb/repositories/query-methods.html#mongodb.repositories.queries.aggregation) · [MongoDB 类型转换](https://www.mongodb.com/docs/manual/reference/operator/aggregation/convert/)
+历史数据优先迁移为统一 BSON 类型。兼容期确需处理旧字符串时，`$toObjectId` 遇到非法值会使聚合失败，`$convert` 可定义 `onError` 和 `onNull`。不要在热查询中逐行转换索引字段。优先对参数完成转换，再直接匹配索引字段。上线前用代表性数据的 `explain("executionStats")` 核对根集合与各 `$lookup` 的执行计划。[Spring Data 聚合方法](https://docs.spring.io/spring-data/mongodb/reference/mongodb/repositories/query-methods.html#mongodb.repositories.queries.aggregation) · [MongoDB 类型转换](https://www.mongodb.com/docs/manual/reference/operator/aggregation/convert/)
 
 ### 乐观锁、SKU 库存和金额原子更新
 
@@ -300,7 +366,7 @@ return mongo.updateFirst(filter, deduction, SkuEntity.class)
 
 ### 数据库、缓存和运行配置
 
-使用现有 JDK 27 与 IDEA 自带 Maven。框架先执行 `./scripts/mvn.sh install`，应用随后构建。网关运行模式固定 `spring.main.web-application-type=reactive`。业务服务设置 `spring.main.web-application-type=none` 和 `spring.rsocket.server.transport=tcp`，导入 `RsocketInterceptorConfig`。框架在启动时拒绝业务服务的 HTTP 模式和 WebSocket 传输。只向外部开放网关的 HTTP 端口，业务 RSocket TCP 端口限网关与获准调用的 Java 服务访问。
+使用现有 JDK 27 与 IDEA 自带 Maven。框架先执行 `./scripts/mvn.sh install`，应用随后构建。网关运行模式固定 `spring.main.web-application-type=reactive`。业务服务设置 `spring.main.web-application-type=none` 和 `spring.rsocket.server.transport=tcp`，导入 `RsocketInterceptorConfig`。框架在启动时拒绝业务服务的 HTTP 模式和 WebSocket 传输。只向外部开放网关的 HTTPS/WSS 入口，业务 RSocket TCP 端口限网关与获准调用的 Java 服务访问。
 
 | 功能 | 用法 |
 |---|---|
@@ -315,8 +381,8 @@ return mongo.updateFirst(filter, deduction, SkuEntity.class)
 
 业务应用引入 `lambda-framework-nacos`。端口、路由、数据库、缓存、消息队列和业务开关统一放 Nacos。项目本地只保留加载 Nacos 所需的项目名、必需导入声明和引导参数。环境变量提供 Nacos 地址、namespace ID、group 和登录凭据。Nacos 中可通过占位符引用部署环境注入的第三方凭据。
 
-- Data ID 固定为 `<项目名称>.properties`，与 `spring.application.name` 一致。例如项目 `order-gateway` 使用 `order-gateway.properties`，项目 `user-service` 使用 `user-service.properties`。同一项目的开发、测试和生产使用各自 namespace，Data ID 保持一致。
-- 配置读取和服务发现使用明确的 namespace ID 和 group。Data ID 内容类型选 Properties，先发布再启动应用。用于发现的服务名和网关 `rb://` 目标一致。RSocket 服务登记实际 TCP 端口。
+- Data ID 固定为 `<项目名称>.properties`，与 `spring.application.name` 一致。例如项目 `order-gateway` 使用 `order-gateway.properties`，项目 `user-service` 使用 `user-service.properties`。同一项目的各运行环境使用各自 namespace，Data ID 保持一致。
+- 配置读取和服务发现使用明确的 namespace ID 和 group。Data ID 内容类型选 Properties，先发布再启动应用。用于发现的服务名与网关 `rb://` 和 `ws://` 的目标一致。RSocket 服务登记实际 TCP 端口。
 - 项目本地 `application.properties` 使用如下引导配置，第一行用已确认的项目名。
 
 ~~~properties
@@ -335,9 +401,9 @@ spring.cloud.nacos.password=${NACOS_PASSWORD}
 
 ### RSocket、网关与聊天
 
-Java RPC 的 Facade 方法写完整的 `@MessageMapping`，例如 `order.orderFacade.find`。首段 `order` 是服务发现名，同一个 Facade 的方法使用同一服务名。调用方通过 `@RSocketRpc` 注入 Facade。需要同时提供网关入口时，在同一个注解中加上以 `/` 开头的 HTTP 路径，由网关的 `rb://<服务名>` 路由转发。仅经网关访问的方法可以直接在业务 Controller 上声明路径。
+Java RPC 的 Facade 方法写完整的 `@MessageMapping`，例如 `order.orderFacade.find`。首段 `order` 是服务发现名，同一个 Facade 的方法使用同一服务名。调用方通过 `@RSocketRpc` 注入 Facade。需要同时提供网关入口时，在同一个注解中加上以 `/` 开头的固定路径，由网关的 `rb://<服务名>` 或 `ws://<服务名>` 路由转发。仅经网关访问的方法可以直接在业务 Controller 上声明路径。
 
-### 按返回类型选择交互方式
+### HTTP 按返回类型选择交互方式
 
 | 后端签名 | RSocket 交互 | 网关响应 |
 |---|---|---|
@@ -347,7 +413,7 @@ Java RPC 的 Facade 方法写完整的 `@MessageMapping`，例如 `order.orderFa
 | `Flux<I>` 等普通响应式入参，返回 `BiFlux<O>` | `request/channel` | 双向 NDJSON，客户端可发 JSON 数组或 NDJSON 行，响应逐行返回。 |
 | 普通单条入参，返回 `BiFlux<O>` | `request/stream` | 处理一条输入，响应逐行返回 NDJSON。 |
 
-前端只向网关发送 HTTP POST。业务网关只转发 `rb://` 路由，并核对服务端通过 `@MessageMapping` 发布的固定斜杠路径。网关使用重写后的路径查契约。未公开路径返回 404，契约暂不可用返回 503。业务方法声明映射和签名即可。
+HTTP 业务请求经网关的 `rb://` 路由发送 POST。WebSocket 经网关的 `ws://` 路由访问输入为 `Flux<I>`、返回为 `BiFlux<O>` 的接口。两种入口都核对服务端通过 `@MessageMapping` 发布的固定斜杠路径。网关使用重写后的路径查契约。未公开路径返回 404，契约暂不可用返回 503。业务方法声明映射和签名即可。
 
 ~~~java
 @MessageMapping("/api/order/summary")
@@ -375,30 +441,35 @@ public BiFlux<Check> exchange(Flux<Item> items) {
 
 普通 `Flux` 聚合完成后返回 `{"serviceCode":"E00000000","serviceMessage":"操作成功","data":[...]}`。NDJSON 每条业务元素输出一行，放在该行的 `data` 数组中。零条结果的 `data` 为 `[]`。聚合接口与流式接口共用异常转换，失败外壳的 `data` 为 `[]`。流中途失败时追加一行错误，保留已发出的成功行，并结束响应。
 
+### WSS 路由与服务间双向 RPC
+
+客户端连接 `wss://<网关域名>/ws/chat`。在网关的 Nacos 配置内加入下列路由，业务服务仍使用 RSocket TCP。TLS 由网关或其前置入口终止。前置代理应转发 WebSocket Upgrade，认证与授权在网关握手时生效。
+
+~~~properties
+spring.cloud.gateway.server.webflux.routes[1].id=chat-websocket
+spring.cloud.gateway.server.webflux.routes[1].uri=ws://chat-service
+spring.cloud.gateway.server.webflux.routes[1].predicates[0]=Path=/ws/chat
+spring.cloud.gateway.server.webflux.routes[1].filters[0]=SetPath=/api/order/exchange
+~~~
+
+每条 WebSocket 文本消息包含一个 JSON 请求值。每个响应元素独立发送一条 JSON 文本消息，例如 `{"serviceCode":"E00000000","serviceMessage":"操作成功","data":[{"sku":"A1"}]}`。业务失败发送错误外壳，`data` 为 `[]`，随后关闭连接。客户端可在同一个连接上先收到回复再发送下一条请求。
+
+服务 A 可以将入站 `Flux<I>` 传给服务 B 的 Facade，由服务 B 的 `BiFlux<O>` 直接返回给 A。B 的 Facade 使用点分隔的 `@MessageMapping`，A 用 `@RSocketRpc` 注入。前端到网关是 WebSocket JSON，网关到 A 是 RSocket JSON，A 到 B 是 RSocket Fory。业务逻辑保留响应式链路，取消随订阅传递。
+
 Java 服务间原生 RPC 固定使用 Apache Fory。两端导入 `RSocketStrategiesConfig` 后，框架从已声明的请求、响应类型中自动收集 record、嵌套泛型、枚举和框架分页类型。保持 Facade 契约同版。旧项目中的多态实际类型或非 record DTO 可用 `ForyRpcTypes` 扩展白名单。服务端拒绝用 JSON 或二进制连接调用点分隔的原生 RPC 路由。网关 JSON 业务路由使用 `/` 前缀。身份元数据沿用 JSON。
 
 网关默认每个后端实例复用一条 RSocket TCP 连接。需要承受单条连接断开的关键路由可在 Nacos 配置 `rsocketConnectionsPerInstance=2`。连接关闭后按最近一次成功发现的目标列表补建连接。请求已发出时由调用方根据业务幂等规则决定如何处理，网关不自动重放。
 
-保持首条消息、单次订阅、上下文、背压和取消。处理首信号时区分数据、错误与完成。遵循 RSocket 和 Spring 的 Payload 所有权，写测试确认释放行为。部署经过 HTTP 代理时实测全双工与缓冲策略。
+保持首条消息、单次订阅、上下文、背压和取消。处理首信号时区分数据、错误与完成。遵循 RSocket 和 Spring 的 Payload 所有权，按流转移或释放缓冲区。经过代理时保持全双工、按条转发和取消语义。
 
 私聊与群聊用会话 ID 区分，消息包含发送人、类型、内容、时间。表情用 Unicode，图片与视频的消息内容用对象存储 key。网关可按字节转发小二进制。媒体文件上传和下载使用独立链路，权限、群成员校验、消息幂等和离线拉取由业务实现。
 
-### 验收与交付
-
-- 核对父工程能一起构建 service 和 facade。业务微服务的依赖方向为 service → facade，RPC 调用方只引入 facade。
-- 核对 `com.<项目名>` 下的包位置、service 包根的业务实现类，以及 facade 模块接口与 service 模块实现的对应关系。
-- 核对 Controller、Facade 实现和 Service 共用接口内的请求、响应 record。用同一业务输入分别验证经网关的 HTTP POST 与 Fory RPC，确认响应只包含公开字段。验收时检查业务进程无 HTTP 监听，验证原生 RPC 路由会拒绝 JSON。
-
-先复现旧行为，再在相同条件验证修复。性能记录负载、吞吐、延迟、CPU 与进程内存。测试使用唯一 MongoDB 数据库、Redis 前缀、Qdrant 集合与 RabbitMQ 资源名，结束后先停应用，再按清单清理并复查。临时测试代码和日志放仓库外。README 记录启动、接口、框架用法、验收结果和技能。提交前核对真实环境配置与凭据是否混入 Git。
-
 ## 开发规范技能
-
-使用 `$lambda-java-backend` 应用以下规则。技能源文件位于框架仓库的 `skills/lambda-java-backend/SKILL.md`。
 
 ~~~markdown
 ---
 name: lambda-java-backend
-description: 按统一风格开发、修改或审查 Lambda Framework Java 后端项目。适用于项目命名、POST 接口、Facade 契约、RSocket RPC、MongoDB、分页、用户体系及交付验收。
+description: 按统一风格开发、修改或审查 Lambda Framework Java 后端项目。适用于项目命名、POST 接口、Facade 契约、RSocket RPC、MongoDB、分页和用户体系。
 ---
 
 新建项目或微服务前确认项目名称。用户已提供时直接使用。缺少名称时询问，等待期间可以检查现有代码和准备设计。用已确认的名称派生 Maven artifactId、`com.<项目名>` 包根、Spring 应用名、服务发现名和 Nacos Data ID `<项目名称>.properties`。
@@ -407,14 +478,13 @@ description: 按统一风格开发、修改或审查 Lambda Framework Java 后�
 
 - 业务微服务拆为 `<项目名>-service` 和 `<项目名>-facade`。service 依赖 facade，RPC 调用方只依赖 facade。
 - 对外接口放 facade 模块的 `facade` 包，服务端实现放 service 模块的 `facade` 包。业务类 `UserServiceImpl` 直接放 `service` 包，省略业务接口和 `impl` 子包。
-- 对外 HTTP 一律经网关转发，使用 POST 动作路径。业务服务只监听内网 RSocket TCP。业务网关仅转发 rb:// 下已发布的固定 @MessageMapping 路径。Controller、Facade 实现与 Service 共用 Facade 接口内的请求、响应 record。签名保留 `UserFacade.FindRequest`、`UserFacade.Detail` 等外层归属，内层名称按业务动作或用途命名。实体使用 `UserEntity` 等名称，仅在 service 模块持久化使用。
-- 应用运行配置放 Nacos，本地只留项目名、导入声明和 Nacos 引导配置。网关使用 reactive，以 rb:// 转发 JSON 并保留响应类型。业务进程用 none 和 TCP。Facade 方法只写 @MessageMapping 和签名。原生 Java RPC 自动使用 Fory，从同版 Facade 契约收集 record、枚举和框架分页类型。
+- 对外 HTTP 一律经网关转发，使用 POST 动作路径。WSS 也由网关接入。业务服务只监听内网 RSocket TCP。网关只转发已发布的固定 @MessageMapping 路径。Controller、Facade 实现与 Service 共用 Facade 接口内的请求、响应 record。签名保留 `UserFacade.FindRequest`、`UserFacade.Detail` 等外层归属，内层名称按业务动作或用途命名。实体使用 `UserEntity` 等名称，仅在 service 模块持久化使用。
+- 应用运行配置放 Nacos，本地只留项目名、导入声明和 Nacos 引导配置。网关使用 reactive，HTTP 使用 `rb://服务名`，WSS 使用 `ws://服务名`。网关到业务服务使用 RSocket JSON。业务进程用 none 和 TCP。Facade 方法只写 @MessageMapping 和签名。原生 Java RPC 自动使用 Fory，从同版 Facade 契约收集 record、枚举和框架分页类型。
 - Mongo 主键与关联 ID 使用 ObjectId。HTTP JSON 用十六进制字符串，公开 record 的单值 ID 用 @JsonObjectId ObjectId，Fory 直接处理 ObjectId，Repository 直接绑定原生 ID。枚举实现 ConverterEnum。业务金额与标量用字符串，技术字段按规范转换。
 - 每个持久化实体明确表或集合名及唯一的 @Id，可复用基类标识。按 Repository 的筛选、排序、唯一约束或生命周期需求加索引，说明用途并核对实际索引和执行计划。
-- 按业务读写比例、访问路径和增长设计关系。多对多必须有中间表或关系集合，一对多和多对一直接内嵌或持有引用。内嵌需有业务上限，独立分页和高频更新用引用。聚合用未加引号的占位符绑定 ObjectId，实测复杂关联与执行计划。
+- 按业务读写比例、访问路径和增长设计关系。多对多必须有中间表或关系集合，一对多和多对一直接内嵌或持有引用。内嵌需有业务上限，独立分页和高频更新用引用。聚合用未加引号的占位符绑定 ObjectId，按目标集合 BSON 字段名编写关联条件。
 - @Version 按需使用。SKU 以库存足额条件加原子扣减防超卖。字符串金额用旧金额和版本做条件更新，跨文档一致性用事务与幂等键。
 - 复用框架分页、异常、Reactor Context 和数据库连接。区分 SecurityLoginUser、UnifyPO、PrincipalFactory。
-- RSocket Channel 保持首消息、单次订阅、背压、取消和 Payload 所有权。网关 JSON 聚合有上限，NDJSON 逐条输出。 `rb://` 根据返回类型决定响应。Mono 返回单次 JSON，Flux 聚合为 JSON 数组，UiFlux 单向 NDJSON，BiFlux 配合普通 Flux 入参走双向 NDJSON。流式成功行的 data 是数组，失败行的 data 是空数组。聊天 record 描述文字、表情与媒体引用。
-- 使用现有 JDK 和 IDEA Maven。先复现再修复，在相同条件复测。使用隔离测试资源，验收后按名称清理，核对数据并关闭本次启动的 JVM。
-- README 记录项目运行与契约。报告区分实测、设计方案和未测范围。
+- RSocket Channel 保持首消息、单次订阅、背压、取消和 Payload 所有权。网关 JSON 聚合有上限，NDJSON 逐条输出。 `rb://` 根据返回类型决定响应。Mono 返回单次 JSON，Flux 聚合为 JSON 数组，UiFlux 单向 NDJSON，BiFlux 配合普通 Flux 入参走双向 NDJSON。流式成功行的 data 是数组，失败行的 data 是空数组。WSS 只开放 `Flux<I> → BiFlux<O>` 路由。每条 WebSocket 文本消息承载一个 JSON 值。聊天 record 描述文字、表情与媒体引用。
+- 使用现有 JDK 和 IDEA Maven。README 记录启动方式、接口契约与配置。
 ~~~
