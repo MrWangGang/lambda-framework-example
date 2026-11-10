@@ -1,0 +1,14 @@
+services:
+  service-b:
+    build:
+      context: .
+      args:
+        JAVA_RUNTIME_IMAGE: ${JAVA_RUNTIME_IMAGE:?Set a JDK 27 runtime image}
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      NACOS_SERVER_ADDR: "${NACOS_SERVER_ADDR:?Set the Nacos configuration address}"
+      NACOS_NAMESPACE: "${NACOS_NAMESPACE:-public}"
+      NACOS_GROUP: "${NACOS_GROUP:-LAMBDA_EXAMPLE}"
+      NACOS_USERNAME: "${NACOS_USERNAME:-}"
+      NACOS_PASSWORD: "${NACOS_PASSWORD:-}"

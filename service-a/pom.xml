@@ -1,14 +1,16 @@
-<project xmlns="http://maven.apache.org/POM/4.0.0">
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <parent>
         <groupId>org.lambda.framework</groupId>
         <artifactId>lambda-framework-example</artifactId>
         <version>1.0.0-SNAPSHOT</version>
     </parent>
-    <artifactId>lambda-example-service-a</artifactId>
+    <artifactId>lambda-framework-example-service-a</artifactId>
     <packaging>pom</packaging>
     <modules>
-        <module>facade</module>
-        <module>app</module>
+        <module>lambda-framework-example-service-a-enum</module>
+        <module>lambda-framework-example-service-a-facade</module>
+        <module>lambda-framework-example-service-a-server</module>
     </modules>
 </project>
