@@ -30,6 +30,8 @@ curl -fsS -X POST http://127.0.0.1:8081/api/system/info \
 
 ## API
 
+普通接口写在业务服务的 `@Controller` 中。例如 [ExampleController](lambda-example-app/src/main/java/org/lambda/example/app/controller/ExampleController.java) 用 `@MessageMapping("/api/product/find")` 声明查询。客户端通过网关 POST，同一服务前缀覆盖新增接口。需要服务间 Java RPC 时，按下方示例把契约放在 Facade JAR，提供方实现类使用 `@RSocketFacade`。
+
 请求格式为 `application/json`。网关从 `/api/**` 中只转发业务服务已发布的固定 `@MessageMapping` 路径，参数均从请求体取得。未公开路径返回 404。单次响应读取 JSON 外壳的 `data`。收藏列表是普通 `Flux`，网关将结果聚合到一次 JSON 响应的 `data` 数组。下表中的 ObjectId 是 24 位十六进制字符串，向量点 ID 是 UUID。 商品、收藏和购买接口在 Java DTO 中使用 `@JsonObjectId ObjectId`，客户端继续按表中的字符串格式提交。
 
 | POST 动作 | 请求体字段 | 用途 |
@@ -104,12 +106,12 @@ public interface ChatFacade {
 }
 ~~~
 
-[B 的 Maven 模块](lambda-example-service-b/pom.xml) 依赖 Facade JAR、`lambda-framework-rsocket` 和 `lambda-framework-nacos`。[ServiceBApplication](lambda-example-service-b/src/main/java/com/lambda/example/serviceb/ServiceBApplication.java) 导入 `RSocketStrategiesConfig`、`RSocketAcceptorInterceptor`、`RsocketGlobalExceptionHandler`、`RsocketInterceptorConfig` 和 `RsocketRunListener`。后者在启动时把 TCP 端口登记到 Nacos。
+[B 的 Maven 模块](lambda-example-service-b/pom.xml) 依赖 Facade JAR、`lambda-framework-rsocket` 和 `lambda-framework-nacos`。[ServiceBApplication](lambda-example-service-b/src/main/java/com/lambda/example/serviceb/ServiceBApplication.java) 只有标准的 `@SpringBootApplication`。配置 RSocket 端口后，服务端、Fory 和 Nacos 端口注册自动装配。
 
-[ChatFacadeImpl](lambda-example-service-b/src/main/java/com/lambda/example/serviceb/facade/ChatFacadeImpl.java) 由 Spring 扫描并注册。方法沿用接口上的映射。
+[ChatFacadeImpl](lambda-example-service-b/src/main/java/com/lambda/example/serviceb/facade/ChatFacadeImpl.java) 使用 `@RSocketFacade`，沿用接口上的映射。共享 JAR 只有 Facade 接口和 record，调用方只依赖这个 JAR。
 
 ~~~java
-@Controller
+@RSocketFacade
 public class ChatFacadeImpl implements ChatFacade {
     private final ChatServiceImpl chat;
 
@@ -139,7 +141,7 @@ spring.cloud.nacos.discovery.ip=${SERVICE_B_REGISTER_IP:127.0.0.1}
 
 ### 2. 服务 A 调用服务 B
 
-[A 的 Maven 模块](lambda-example-app/pom.xml) 引入 B 的 Facade JAR 和 `lambda-framework-rpc`。[Application](lambda-example-app/src/main/java/org/lambda/example/app/Application.java) 导入 `RSocketStrategiesConfig`、`RSocketLoadbalance` 和 `RsocketRpcProxyBeanFactoryPostProcessor`，并通过 `PrincipalStash` 从 Reactor Context 读取入站身份。
+[A 的 Maven 模块](lambda-example-app/pom.xml) 引入 B 的 Facade JAR 和 `lambda-framework-rpc`。[Application](lambda-example-app/src/main/java/org/lambda/example/app/Application.java) 使用标准的 `@SpringBootApplication`。RPC 模块自动注入 `@RSocketRpc` 字段，并从 Reactor Context 读取入站身份。
 
 A 的 [ChatController](lambda-example-app/src/main/java/org/lambda/example/app/controller/ChatController.java) 把收到的流直接交给 B。Java 业务 Bean 内也可以用同样方式注入并调用 B 的 Facade。
 
@@ -157,7 +159,7 @@ public BiFlux<ChatFacade.Receipt> exchange(Flux<ChatFacade.Message> messages) {
 
 ### 3. 网关每个服务前缀配置一次
 
-下面是示例的实际路由。集中配置时发布到 `lambda-example-gateway.properties`。部署多个业务服务时，分别划分 `/api/order/**`、`/api/user/**` 等前缀。
+[GatewayApplication](lambda-example-gateway/src/main/java/org/lambda/example/gateway/GatewayApplication.java) 使用标准的 `@SpringBootApplication`。网关依赖在 reactive 模式下自动启用转发组件。下面是示例的实际路由。集中配置时发布到 `lambda-example-gateway.properties`。部署多个业务服务时，分别划分 `/api/order/**`、`/api/user/**` 等前缀。
 
 ~~~properties
 spring.cloud.gateway.server.webflux.routes[0].id=example
@@ -252,7 +254,7 @@ user/
 
 ### Facade 契约与 record 命名
 
-- 公开请求和响应统一声明为对外 Facade 接口内的 `record`。入参按动作命名，例如 `FindRequest`、`ChangePasswordRequest`、`PageRequest`。返回按用途命名，例如 `Detail`、`Summary`、`PageItem`。外层 Facade 已表达业务归属，内层名称不重复加表名或实体名，省略 DTO、VO、PO 后缀。
+- 跨服务共享的请求和响应声明为对外 Facade 接口内的 `record`。仅由网关访问的接口可以在 service 模块定义本地请求、响应 record。入参按动作命名，例如 `FindRequest`、`ChangePasswordRequest`、`PageRequest`。返回按用途命名，例如 `Detail`、`Summary`、`PageItem`。外层 Facade 已表达业务归属，内层名称不重复加表名或实体名，省略 DTO、VO、PO 后缀。
 - Controller 与 Facade 实现直接注入 `UserServiceImpl`，复用 Facade 的 record。外部类只导入 `UserFacade`，签名写 `UserFacade.FindRequest` 和 `UserFacade.Detail`。公开契约集中在接口，实体和实现类不声明公开入参、出参。
 - 实体留在 service 模块。Controller、Facade 接口和 Service 的公开业务方法使用契约 record，Service 负责从持久化实体映射公开字段。密码哈希和内部权限留在服务端。公开契约按业务需要显式选择可见的审计字段或并发控制字段。
 - 对外业务 HTTP 统一经网关访问，使用 POST 动作路径，例如 `/api/user/find`。业务服务的路由统一使用 `@MessageMapping`。承接网关转发的路径以 `/` 开头，并使用固定路径。动态业务条件放请求体。请求条件放 JSON 请求体，空请求可用 `EmptyRequest`。RPC 保留 `Mono<UserFacade.Detail>`、`Flux<UserFacade.Detail>` 等完整类型。
@@ -276,7 +278,7 @@ public interface UserFacade {
 }
 ~~~
 
-`UserFacadeImpl` 作为 `@Controller` 实现 `find`，Spring 继承 Facade 的 `@MessageMapping`。同一方法处理 Java RPC 的 `user.userFacade.find` 和网关的 `/api/user/find`，内部调用 `UserServiceImpl.find(UserFacade.FindRequest)`。Facade 模块使用 `spring-messaging` 提供的注解。
+`UserFacadeImpl` 标记 `@RSocketFacade` 并实现 `find`，Spring 继承 Facade 接口的 `@MessageMapping`。共享 Facade 接口本身保持为 Java 契约。同一方法处理 Java RPC 的 `user.userFacade.find` 和网关的 `/api/user/find`，内部调用 `UserServiceImpl.find(UserFacade.FindRequest)`。Facade 模块使用 `spring-messaging` 提供的注解。
 
 ### 实体注解与主键
 
@@ -418,7 +420,7 @@ return mongo.updateFirst(filter, deduction, SkuEntity.class)
 
 ### 数据库、缓存和运行配置
 
-使用现有 JDK 27 与 IDEA 自带 Maven。框架先执行 `./scripts/mvn.sh install`，应用随后构建。网关运行模式固定 `spring.main.web-application-type=reactive`。业务服务设置 `spring.main.web-application-type=none` 和 `spring.rsocket.server.transport=tcp`，导入 `RsocketInterceptorConfig`。框架在启动时拒绝业务服务的 HTTP 模式和 WebSocket 传输。只向外部开放网关的 HTTPS/WSS 入口，业务 RSocket TCP 端口限网关与获准调用的 Java 服务访问。
+使用现有 JDK 27 与 IDEA 自带 Maven。框架先执行 `./scripts/mvn.sh install`，应用随后构建。网关运行模式固定 `spring.main.web-application-type=reactive`。业务服务设置 `spring.main.web-application-type=none` 和 `spring.rsocket.server.transport=tcp`。引入 `lambda-framework-rsocket` 后，配置监听端口即启用 RSocket 服务端及框架拦截器。框架在启动时拒绝业务服务的 HTTP 模式和 WebSocket 传输。只向外部开放网关的 HTTPS/WSS 入口，业务 RSocket TCP 端口限网关与获准调用的 Java 服务访问。
 
 | 功能 | 用法 |
 |---|---|
@@ -453,7 +455,9 @@ spring.cloud.nacos.password=${NACOS_PASSWORD}
 
 ### RSocket、网关与聊天
 
-Java RPC 的 Facade 方法写完整的 `@MessageMapping`，例如 `order.orderFacade.find`。首段 `order` 是服务发现名，同一个 Facade 的方法使用同一服务名。调用方通过 `@RSocketRpc` 注入 Facade。需要同时提供网关入口时，在同一个注解中加上以 `/` 开头的固定路径，由网关的 `rb://<服务名>` 或 `ws://<服务名>` 路由转发。仅经网关访问的方法可以直接在业务 Controller 上声明路径。
+RSocket 提供端、RPC 调用方和 reactive 网关通过 Maven 依赖与配置自动装配。Spring Boot 启动类使用 `@SpringBootApplication`。使用 Nacos 时配置各项目的应用名、连接信息与发现组。
+
+Java RPC 的 Facade 方法写完整的 `@MessageMapping`，例如 `order.orderFacade.find`。首段 `order` 是服务发现名，同一个 Facade 的方法使用同一服务名。调用方通过 `@RSocketRpc` 注入 Facade。需要同时提供网关入口时，在同一个注解中加上以 `/` 开头的固定路径，由网关的 `rb://<服务名>` 或 `ws://<服务名>` 路由转发。仅经网关访问的方法放在 `@Controller` 中，直接声明斜杠路径。使用默认的 Spring Boot 包结构。Facade JAR 只放接口和契约类型，提供方实现留在 service 模块。
 
 ### HTTP 按返回类型选择交互方式
 
@@ -508,7 +512,7 @@ spring.cloud.gateway.server.webflux.routes[1].filters[0]=StripPrefix=1
 
 服务 A 可以将入站 `Flux<I>` 传给服务 B 的 Facade，由服务 B 的 `BiFlux<O>` 直接返回给 A。B 的 Facade 使用点分隔的 `@MessageMapping`，A 用 `@RSocketRpc` 注入。前端到网关是 WebSocket JSON，网关到 A 是 RSocket JSON，A 到 B 是 RSocket Fory。业务逻辑保留响应式链路，取消随订阅传递。
 
-Java 服务间原生 RPC 固定使用 Apache Fory。两端导入 `RSocketStrategiesConfig` 后，框架从已声明的请求、响应类型中自动收集 record、嵌套泛型、枚举和框架分页类型。保持 Facade 契约同版。签名之外的多态子类型用 `ForyRpcTypes` 显式注册。服务端拒绝用 JSON 或二进制连接调用点分隔的原生 RPC 路由。网关 JSON 业务路由使用 `/` 前缀。身份元数据沿用 JSON。
+Java 服务间原生 RPC 固定使用 Apache Fory。提供方依赖 `lambda-framework-rsocket`，调用方依赖 `lambda-framework-rpc`。Spring Boot 自动配置编解码器，框架从已声明的请求、响应类型中自动收集 record、嵌套泛型、枚举和框架分页类型。保持 Facade 契约同版。签名之外的多态子类型用 `ForyRpcTypes` 显式注册。服务端拒绝用 JSON 或二进制连接调用点分隔的原生 RPC 路由。网关 JSON 业务路由使用 `/` 前缀。身份元数据沿用 JSON。
 
 网关默认每个后端实例复用一条 RSocket TCP 连接。需要承受单条连接断开的关键路由可在 Nacos 配置 `rsocketConnectionsPerInstance=2`。连接关闭后按最近一次成功发现的目标列表补建连接。请求已发出时由调用方根据业务幂等规则决定如何处理，网关不自动重放。
 
@@ -531,7 +535,7 @@ description: 按统一风格开发、修改或审查 Lambda Framework Java 后�
 - 业务微服务拆为 `<项目名>-service` 和 `<项目名>-facade`。service 依赖 facade，RPC 调用方只依赖 facade。
 - 对外接口放 facade 模块的 `facade` 包，服务端实现放 service 模块的 `facade` 包。业务类 `UserServiceImpl` 直接放 `service` 包，省略业务接口和 `impl` 子包。
 - 对外 HTTP 一律经网关转发，使用 POST 动作路径。WSS 也由网关接入。业务服务只监听内网 RSocket TCP。网关只转发已发布的固定 @MessageMapping 路径。Controller、Facade 实现与 Service 共用 Facade 接口内的请求、响应 record。签名保留 `UserFacade.FindRequest`、`UserFacade.Detail` 等外层归属，内层名称按业务动作或用途命名。实体使用 `UserEntity` 等名称，仅在 service 模块持久化使用。
-- 应用运行配置放 Nacos，本地只留项目名、导入声明和 Nacos 引导配置。网关使用 reactive，HTTP 使用 `rb://服务名`，WSS 使用 `ws://服务名`。网关到业务服务使用 RSocket JSON。业务进程用 none 和 TCP。Facade 方法只写 @MessageMapping 和签名。原生 Java RPC 自动使用 Fory，从同版 Facade 契约收集 record、枚举和框架分页类型。
+- 应用运行配置放 Nacos，本地只留项目名、导入声明和 Nacos 引导配置。网关使用 reactive，HTTP 使用 `rb://服务名`，WSS 使用 `ws://服务名`。网关到业务服务使用 RSocket JSON。业务进程用 none 和 TCP。RSocket 提供方、RPC 调用方和网关按 Maven 依赖及应用配置自动装配。共享 Facade 方法只写 @MessageMapping 和签名，`@RSocketFacade` 只标在服务提供方实现类。普通网关接口使用 `@Controller` 和斜杠路径。原生 Java RPC 自动使用 Fory，从同版 Facade 契约收集 record、枚举和框架分页类型。
 - Mongo 主键与关联 ID 使用 ObjectId。HTTP JSON 用十六进制字符串，公开 record 的单值 ID 用 @JsonObjectId ObjectId，Fory 直接处理 ObjectId，Repository 直接绑定原生 ID。枚举实现 ConverterEnum。业务金额与标量用字符串，技术字段按规范转换。
 - 每个持久化实体明确表或集合名及唯一的 @Id，可复用基类标识。按 Repository 的筛选、排序、唯一约束或生命周期需求加索引，说明用途并核对实际索引和执行计划。
 - 按业务读写比例、访问路径和增长设计关系。多对多必须有中间表或关系集合，一对多和多对一直接内嵌或持有引用。内嵌需有业务上限，独立分页和高频更新用引用。聚合用未加引号的占位符绑定 ObjectId，按目标集合 BSON 字段名编写关联条件。

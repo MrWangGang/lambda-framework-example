@@ -1,11 +1,11 @@
 package com.lambda.example.serviceb.facade;
 
 import com.lambda.example.serviceb.service.ChatServiceImpl;
+import org.lambda.framework.common.annotation.rsocket.RSocketFacade;
 import org.lambda.framework.common.support.BiFlux;
-import org.springframework.stereotype.Controller;
 import reactor.core.publisher.Flux;
 
-@Controller
+@RSocketFacade
 public class ChatFacadeImpl implements ChatFacade {
     private final ChatServiceImpl chat;
 
